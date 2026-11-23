@@ -1,0 +1,70 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit reviews every pull request to main on GitHub (Vyeche/NineLives), next to the Gauntlet.
+# The project's rules live in AGENTS.md and PRODUCT.md; the path notes below point at the parts
+# that are easy to get wrong.
+language: en-US
+tone_instructions: "Plain, friendly and short. Point at the line and say what breaks, then the fix."
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+  path_filters:
+    - "!docs/images/**"
+    - "!config/sounds/**"
+    - "!**/*.gif"
+    - "!**/*.png"
+  path_instructions:
+    - path: "config/tab_bar.py"
+      instructions: >-
+        This file monkeypatches kitty internals (TabBar, TabManager, Boss) from inside kitty. Every
+        patch must check that what it relies on exists, switch itself off if kitty renamed it, and
+        carry a _vye_patched guard. Patches stay installed across a config reload, so new behaviour
+        behind an existing patch must go through a kitty.tab_bar._vye_* hook. Drawing code runs on
+        kitty's UI thread: no blocking I/O, no network, nothing slow per redraw. Never call kitty's
+        request_attention (it raises and focuses the window on COSMIC). Secondary text uses palette
+        colours, not SGR dim; text must stay ≥ 4.5:1 and icons ≥ 3:1 in both themes.
+    - path: "scripts/kitty-relaunch.sh"
+      instructions: >-
+        This closes and restarts the user's real kitty, so a bug can lose every tab. Check set -e /
+        pipefail traps, quoting of folders and names (spaces, $, newlines), that it never leaves the
+        user without a kitty, and that nothing internal leaks into the new kitty's environment.
+    - path: "scripts/kitty-tabs.py"
+      instructions: >-
+        Builds the kitty session file for the restart. Session files are parsed line by line and kitty
+        expands $VARS in some fields: check escaping. Claude panes must never both get --continue in
+        one folder.
+    - path: "scripts/install.sh"
+      instructions: >-
+        Runs against the user's ~/.config/kitty. It may only delete its own backups
+        (<file>.bak-YYYYMMDD-HHMMSS) and must never touch other files.
+    - path: ".github/workflows/**"
+      instructions: >-
+        The Gauntlet runs untrusted pull request code: pull_request only (never pull_request_target),
+        read-only permissions for any job that runs PR code, every action pinned to a full commit SHA
+        and every download to a SHA-256, persist-credentials: false.
+    - path: "docs/**"
+      instructions: >-
+        User docs: plain, friendly, short words. Keep them in step with behaviour (README, the wiki,
+        the F1 sheet config/shortcuts.sh and the tips config/tips.sh), with a line in
+        docs/wiki/Whats-New.md for user-visible changes.
+    - path: "tests/**"
+      instructions: >-
+        Every fix ships with a regression test that fails without it. Fixtures use made-up names and
+        paths, never real ones.
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - "PRODUCT.md"
+      - "CONTRIBUTING.md"
+chat:
+  auto_reply: true
