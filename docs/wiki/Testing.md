@@ -11,7 +11,7 @@ It checks:
 - **Install:** into a temp folder, with kitty's config check, and every file arrives.
 - **Sounds:** all six are present and on their loudness targets.
 - **Links:** every wiki and README link resolves.
-- **A hidden test kitty:** no errors in its log, "needs you" plays, `kitty-relaunch.sh --status` sees working and waiting tabs, a shortcut earns its badge. Last, it splits three tabs (nested splits with a Claude pane, a renamed tab, a zoomed tab), restarts the test kitty with `kitty-relaunch.sh` and checks every tab comes back with the same panes, folders, layout, split sizes, active pane and name.
+- **A hidden test kitty:** no errors in its log, "needs you" plays, `kitty-relaunch.sh --status` sees working and waiting tabs, a shortcut earns its badge, the sidebar's buttons and the short-window list work. In an 860 px window and at font size 20 (both make kitty's sidebar narrower) it checks the search row stays whole, that the button columns in `sidebar.txt` are where kitty drew `⚠`, `+` and `×`, and clicks them. Last, it splits three tabs (nested splits with a Claude pane, a renamed tab, a zoomed tab), restarts the test kitty with `kitty-relaunch.sh` and checks every tab comes back with the same panes, folders, layout, split sizes, active pane and name, and that the restored plain shells (titled `bash`) are named by their folder.
 
 It also saves a sidebar screenshot to `/tmp/ninelives-check.png`. Run it before every commit.
 
@@ -21,6 +21,7 @@ python3 -m unittest discover -s tests -v
 ```
 - **`tests/test_tab_bar.py`** loads `config/tab_bar.py` against a small fake kitty, with HOME and quest state in a temp folder. It covers:
   - drawing and text fitting, including wide characters
+  - the search row, its buttons, **+ New tab** and the `×` at every sidebar width (a narrow window, a big font)
   - elapsed times and the "done" burst frames
   - the cat's priorities
   - sounds: mute, volume, bursts, the watched-tab rule, classic mode
@@ -60,7 +61,7 @@ kitty on a hidden X display with one tab per status: working, title spinner, pro
 done, needs you, error, new output, a long renamed title and wide characters. Sounds and notifications go
 to stubs, and quests use their own state folder, so nothing reaches your real kitty, speakers or badges.
 ```bash
-bash scripts/test-kitty.sh start light       # or dark; add a size, e.g. 1100x760
+bash scripts/test-kitty.sh start light       # or dark; add a size, e.g. 1100x760, and a font size, e.g. 20
 bash scripts/test-kitty.sh shot sidebar      # screenshot of the sidebar (2x); prints the PNG path
 bash scripts/test-kitty.sh shot all "null"   # the whole window (any ffmpeg filter)
 bash scripts/test-kitty.sh k focus-tab --match index:6   # any kitty @ command
@@ -95,19 +96,30 @@ bash scripts/record.sh streak search     # some of them
 bash scripts/record.sh all               # all of them (about 4 minutes: status waits a minute so times show)
 ```
 Sidebar recordings are doubled in size (nearest-neighbour, so text stays crisp); whole-window ones are
-1:1. The test window is 960 px wide: below about 950 px kitty makes the sidebar narrower and the end of
-the search row is cut off (`…+`). Look at the result before committing, and keep each GIF small (they are
+1:1. The test window is 960 px wide: below about 950 px kitty makes the sidebar narrower (a third of
+the window at most) and the search row shortens its words, which isn't the look the GIFs show. Look at
+the result before committing, and keep each GIF small (they are
 50–200 KB). Like the test kitty, it uses the hidden display only, so run it when no one else
 (`check.sh` included) is using the test kitty.
+
+## The YouTube Short
+`tools/short/` makes the vertical Short the same way: `capture.sh` records two takes from the hidden
+test kitty (real shortcuts pressed with `scripts/xkey.py`, states written to the fake agents, the
+restart through `test-kitty.sh relaunch`) with a meta file of captions and event times, and
+`compose_short.py` puts them together with the sounds the stubs logged, over a music bed
+(`music.py`) synthesized with the same timbres as the sounds. See
+[tools/short/README.md](https://github.com/Vyeche/NineLives/blob/main/tools/short/README.md).
 
 **Checks before committing a tab_bar.py change** (beyond `check.sh`)
 - A screenshot in both themes.
 - The reload path: start with the old file, copy the new one in, `kitty @ load-config`. There should be no errors in the kitty log, and sounds should not play twice.
 - An idle window should stop redrawing.
 
-## Clicking the hidden test kitty
+## Clicking and typing on the hidden test kitty
 `scripts/xclick.py :97 X Y [button]` clicks at a pixel on the hidden test kitty's display (X11 XTest),
 so your real pointer never moves. `check.sh` uses it to click the `⋯ hidden:` line of a short window.
+`scripts/xkey.py :97 ctrl+alt+u` presses keys there the same way (`--type TEXT` types), so a recording
+can use the real shortcuts.
 
 ## A virtual mouse
 `scripts/vmouse.py` (needs python-evdev and write access to `/dev/uinput`) drives a real kitty window,

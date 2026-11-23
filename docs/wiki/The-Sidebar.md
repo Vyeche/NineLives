@@ -5,7 +5,7 @@ Every tab is two lines, with names and folders lined up in one column:
  12 ◐ Fix the login bug          number, status, name (long names end in …)
       alpha/proj-one      3m     last two folders, and how long it has been in this state
 ```
-- **Name:** the tab's title (Claude's task, omp's title), or the folder name for a plain shell. Claude's `✳` prefix is dropped: the status slot already says that. Rename with **Ctrl+Shift+R**.
+- **Name:** the tab's title (Claude's task, omp's title), or the folder name for a plain shell (also one whose title is just `bash`, as after a restart, unless you named the tab that). Claude's `✳` prefix is dropped: the status slot already says that. Rename with **Ctrl+Shift+R**.
 - **Agent:** under the status icon, a small grey mark says which agent runs in the tab: `✳` Claude, `π` omp, two letters for others (`oc` opencode, `cx` codex, `gm` gemini, `ai` aider). A plain shell has none.
 - **Folder:** the last two folders, with `~` for home; cut at the start with `…` if long. In a git repo on a branch other than `main`/`master`, the branch follows in magenta: `code/api ⌥ fix-parser`.
 - **Time** (`3m`, `1h05`): how long the tab has been working, waiting or finished. It appears after one minute, and counts from when the sidebar first saw that state, so it starts again after a kitty restart.
@@ -23,6 +23,11 @@ The top of the sidebar has a search row, like Warp's:
   kitty can't tell where the mouse hovers, so only the current tab has one.
 
 ![Clicking + opens a fifth tab, clicking its × closes it, then clicking tab 3 and tab 2 switches to them while the hint line under New tab says Alt+3 also gets here](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/buttons.gif)
+
+In a narrow window or with a big font kitty makes the sidebar narrower (it never takes more than a
+third of the window), and the row makes room for its buttons: the words get shorter (`Search…`,
+`Find…`, then only `❯`) while `⚠1` and `+` stay whole and clickable, `+` always above the `×`.
+**+ New tab**, the quest line and the tabs' names and folders fit the narrower sidebar too.
 
 Clicking a button doesn't earn that shortcut's quest badge: the quests teach the keys.
 `kitty-buttons off` hides the row and the ×, `kitty-buttons on` brings them back.
@@ -60,7 +65,8 @@ sidebar keeps the ones that matter: **+ New tab** with the cat, the tab you're o
 for you, tabs with an error, then the tabs nearest yours. The last line names the rest, e.g.
 `⋯ hidden: 1–2, 10`; click that line to go to the first hidden tab. Tabs keep their real numbers, so
 **Alt+N** still goes to tab N.
-Which tabs are shown is written to `~/.local/state/ninelives/sidebar.txt` whenever it changes.
+Which tabs are shown is written to `~/.local/state/ninelives/sidebar.txt` whenever it changes, with
+where the buttons are and the columns kitty really drew `⚠`, `+` and `×` in (`check.sh` compares them).
 
 ## Celebrations
 When you earn a badge, a gold wave runs down the tab numbers, and the line under **+ New tab** sparkles

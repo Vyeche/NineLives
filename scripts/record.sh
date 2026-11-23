@@ -8,9 +8,9 @@
 # Writes docs/images/gifs/NAME.gif (and the walkthrough's stills to docs/images/steps/). Each one
 # restarts the test kitty with its own made-up tabs, and the last one stops it. Only one user of
 # the test kitty at a time (check.sh uses it too). The window is 960 px wide: narrower, kitty makes
-# the sidebar narrower too and the search row gets cut off.
+# the sidebar narrower too and the search row shortens its words.
 set -euo pipefail
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 T="${NL_TEST_DIR:-${TMPDIR:-/tmp}/ninelives-test}"
 DISP="${NL_TEST_DISPLAY:-:97}"            # always the hidden display, never $DISPLAY
 SOCK="unix:@ninelives-test-kitty"
@@ -21,11 +21,11 @@ SCENES="getting-started status status-light search buttons streak restart"
 
 tk() { bash "$REPO/scripts/test-kitty.sh" "$@"; }
 k() { kitty @ --to "$SOCK" "$@"; }
-start() {  # start THEME SIZE: a test kitty with one empty tab (code/webapp)
-  NL_TEST_SCENE=none tk start "$1" "$2" >/dev/null
+start() {  # start THEME SIZE [FONT_SIZE]: a test kitty with one empty tab (code/webapp)
+  NL_TEST_SCENE=none tk start "$1" "$2" ${3:+"$3"} >/dev/null
   # Shells that read a bashrc (the ones a restart reopens) get a short prompt with no user or host
   # name in it, no sudo hint from the system bashrc, and the folder as their title (as kitty's
-  # shell integration does), so a restarted plain tab keeps its folder name in the sidebar.
+  # shell integration does). (A shell that sets no title is named by its folder in the sidebar anyway.)
   cat > "$T/home/.bashrc" <<'RC'
 PS1='\W \$ '
 PROMPT_COMMAND='printf "\e]2;%s\a" "$PWD"'
@@ -199,6 +199,9 @@ scene_restart() {
   sleep 3; kill -INT "$REC_PID" 2>/dev/null || true
   finish 1
 }
+
+# Sourced (tools/short/capture.sh uses the helpers above): stop here.
+(return 0 2>/dev/null) && return 0
 
 cmd="${1:-}"
 case "$cmd" in

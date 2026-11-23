@@ -40,6 +40,7 @@ def folder(cwd: str) -> str:
 
 
 SHELLS = {"bash", "sh", "zsh", "fish", "dash"}
+SHELL_NAMES = SHELLS | {"ksh", "tcsh"}     # a window title that is just one of these: no title set
 
 
 def tab_state(tab, win) -> str:
@@ -68,9 +69,12 @@ def cells(s: str) -> int:
                for c in s)
 
 
-def tab_name(title: str, cwd: str) -> str:
-    """The sidebar's name: a plain shell's title is its folder, so show the folder's name."""
-    if title[:1] in ("", "~", "/") or re.match(r"^[\w.-]+@[\w.-]+:", title):
+def tab_name(title: str, cwd: str, renamed: bool = False) -> str:
+    """The sidebar's name: a plain shell's title is its folder, so show the folder's name. A bare
+    shell name ("bash": nothing set a title, as in a tab kitty-relaunch reopened) counts as one too,
+    unless you renamed the tab that."""
+    if title[:1] in ("", "~", "/") or re.match(r"^[\w.-]+@[\w.-]+:", title) or (
+            not renamed and title.strip().lstrip("-") in SHELL_NAMES):
         return cwd.rstrip("/").rsplit("/", 1)[-1] or "/"
     return LEAD_RE.sub("", title, count=1) or title
 
@@ -130,7 +134,7 @@ def rows(data) -> list:
             mine = any(x.get("is_self") for x in t.get("windows", []))
             title = (w.get("title") if mine else t.get("title")) or w.get("title") or ""
             cwd = w.get("cwd") or ""
-            out.append({"n": i + 1, "id": t["id"], "name": tab_name(title, cwd),
+            out.append({"n": i + 1, "id": t["id"], "name": tab_name(title, cwd, bool(t.get("title_overridden"))),
                         "folder": folder(cwd), "state": tab_state(t, w), "agent": agent_mark(w),
                         "branch": git_branch(cwd) if cwd else "",
                         "active": bool(t.get("is_active")) and osw is focused})

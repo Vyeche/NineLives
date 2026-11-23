@@ -7,8 +7,9 @@ brings every tab back. Nine lives, one cat.
 
 ![Four tabs in the NineLives sidebar: two start working with spinning blue icons, one finishes with a gold sparkle that lands on a green check while the cat at the bottom sings a note, another turns into a blinking amber block while the cat says =O.O= ! and ⚠1 appears in the search row, then Ctrl+Alt+U jumps to the waiting tab and a First Responder badge sparkles](docs/images/gifs/getting-started.gif)
 
-New here? The [Getting started](docs/wiki/Getting-Started.md) walkthrough goes from install to your
-first "needs you" in pictures.
+**[Watch the 45-second tour with sound on YouTube](https://youtube.com/shorts/hra1NPQsbwk)**: the
+sounds and the music are NineLives' own. New here? The [Getting started](docs/wiki/Getting-Started.md)
+walkthrough goes from install to your first "needs you" in pictures.
 
 ![The sidebar in the dark and light themes: working tabs spin, a finished one has ✓, the one waiting for you has an amber block, an error has ✗, and the cat at the bottom says a tab needs you](docs/images/sidebar.png)
 
