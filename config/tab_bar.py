@@ -322,7 +322,8 @@ def _note_done(now: float) -> int:
 def _sound_file(kind: str) -> str:
     ours, classic, _vol = SOUNDS[kind]
     if IS_MACOS:
-        # afplay can't read .oga: install.sh adds a .wav of each sound; classic: macOS's own sounds
+        # the .wav install.sh adds of each sound (older macOS can't play .oga; 15 can); classic:
+        # macOS's own sounds
         path = os.path.join(SOUND_DIR, os.path.splitext(ours)[0] + ".wav")
         if os.path.exists(CLASSIC_FILE) or not os.path.isfile(path):
             path = os.path.join(MAC_SOUNDS, MAC_CLASSIC[classic]) if classic in MAC_CLASSIC else ""

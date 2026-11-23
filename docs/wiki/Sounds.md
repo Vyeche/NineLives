@@ -35,8 +35,8 @@ In classic mode "needs you" and "error" are one sound on Pop!_OS (both files lin
 which is one reason NineLives has its own.
 
 ## On a Mac
-New, and not yet heard on a real Mac. macOS has no `paplay`, and as far as we know its `afplay`
-can't play Ogg (`.oga`) files (the Gauntlet's macOS lane reports whether `afinfo` reads them), so
+New, and not yet heard on a real Mac. macOS has no `paplay`, and older macOS can't play Ogg (`.oga`)
+files (macOS 15 can: the Gauntlet's macOS lane found `afinfo` reads them), so
 `install.sh` also makes a `.wav` of each sound (with `scripts/make-sounds.py`, the same notes) and
 NineLives plays them with `afplay`. The volume is meant to match Linux: `paplay`'s volume scale is
 cubed, and `afplay -v` is taken to be a plain gain, so NineLives passes the cube. Nobody has compared

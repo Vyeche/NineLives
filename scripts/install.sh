@@ -78,7 +78,7 @@ while IFS= read -r f; do          # every file, sounds/ included (not __pycache_
   prune "$dest" "$pending"
 done < <(find "$SRC" -type f ! -path '*/__pycache__/*' ! -name '*.pyc' | sort)
 
-# macOS: afplay can't play .oga, so every sound also gets a .wav, made from scratch by
+# macOS: older ones can't play .oga (macOS 15 can), so every sound also gets a .wav, made from scratch by
 # make-sounds.py (no backup: it is NineLives' own, made the same way every time)
 if [ "$(uname -s)" = Darwin ]; then
   WAVS="$(mktemp -d)"; trap 'rm -rf "$WAVS"' EXIT

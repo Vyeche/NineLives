@@ -58,7 +58,7 @@ while IFS= read -r f; do
     fi
   fi
 done < <(find "$SRC" -type f ! -path '*/__pycache__/*' ! -name '*.pyc' | sort)
-# macOS: the .wav of each sound that install.sh made (afplay can't play .oga). One is ours if it is
+# macOS: the .wav of each sound that install.sh made (older macOS can't play .oga). One is ours if it is
 # what make-sounds.py makes now; one you changed is kept.
 wavs=""
 for f in "$SRC"/sounds/*.oga; do

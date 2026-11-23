@@ -35,12 +35,18 @@ KITTEN="$(dirname -- "$(readlink -f -- "$NEW" 2>/dev/null || python3 -c 'import 
 [ -x "$KITTEN" ] || KITTEN="$(command -v kitten || true)"
 MACOS=0; [ "$(uname -s)" = Darwin ] && MACOS=1
 # Run a command in a new session, so it outlives the kitty window this was started from: setsid,
-# or where there is none (macOS) python3 (forking first: setsid fails for a process group leader)
+# or where there is none (macOS) python3 (forking first: setsid fails for a process group leader).
+# python3 -c "$DETACH_PY" "NAMES" COMMAND…: the command gets only the variables named, the ones its
+# caller has. macOS's /usr/bin/python3 is a shim that adds SDKROOT, CPATH, LIBRARY_PATH and
+# MANPATH to the python it starts; they must not reach the new kitty and every tab in it.
 DETACH_PY='import os, sys
+keep = set(sys.argv[1].split())
+for name in [n for n in os.environ if n not in keep]:
+    del os.environ[name]
 if os.getpid() == os.getpgrp() and os.fork():
     os._exit(0)
 os.setsid()
-os.execvp(sys.argv[1], sys.argv[1:])'
+os.execvp(sys.argv[2], sys.argv[2:])'
 # (the detached copy is handed the folder in _KR_CACHE: its clean environment may lack XDG_CACHE_HOME)
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}"
 [ -n "${_KR_CACHE:-}" ] && [[ "${_KR_DETACHED:-}" =~ ^[0-9-]+$ ]] && CACHE="$_KR_CACHE"
@@ -125,12 +131,14 @@ if [ $detached != 1 ] && [ "$MODE" != --dry-run ] && [ "$MODE" != --status ]; th
   if [ -n "$MGR_KEYS" ] && [ -z "${NL_KITTY_SOCKET:-}" ]; then
     for v in $(compgen -e); do grep -qxF "$v" <<< "$MGR_KEYS" || unset "$v" 2>/dev/null || true; done
   fi
-  # (digits only: BSD date, on macOS, has no %N and prints an N, which the check above would reject)
+  # (digits only: an older BSD date (macOS) has no %N and prints an N, which the check above would
+  # reject; macOS 15's prints digits)
   run_id="$$-$RANDOM-$(date +%s%N | tr -cd '0-9')"; : > "$MARK_DIR/kitty-relaunch-$run_id.run"
   if command -v setsid >/dev/null; then
     _KR_DETACHED="$run_id" _KR_SOCK="$SOCK" _KR_CACHE="$CACHE" setsid nohup bash "$0" "$@" >>"$LOG" 2>&1 < /dev/null &
   else
-    _KR_DETACHED="$run_id" _KR_SOCK="$SOCK" _KR_CACHE="$CACHE" python3 -c "$DETACH_PY" nohup bash "$0" "$@" >>"$LOG" 2>&1 < /dev/null &
+    _KR_DETACHED="$run_id" _KR_SOCK="$SOCK" _KR_CACHE="$CACHE" python3 -c "$DETACH_PY" \
+      "$(compgen -e | tr '\n' ' ') _KR_DETACHED _KR_SOCK _KR_CACHE" nohup bash "$0" "$@" >>"$LOG" 2>&1 < /dev/null &
   fi
   echo "Reload running in the background (log: $LOG). The kitty window will close and reopen."
   exit 0
@@ -220,7 +228,8 @@ if [[ "$SOCK" == unix:/* ]] && [ -S "${SOCK#unix:}" ]; then rm -f -- "${SOCK#uni
 if command -v setsid >/dev/null; then
   setsid "$NEW" -o allow_remote_control=socket-only --listen-on "$SOCK" --session "$SESSION" >/dev/null 2>&1 < /dev/null &
 else
-  python3 -c "$DETACH_PY" "$NEW" -o allow_remote_control=socket-only --listen-on "$SOCK" --session "$SESSION" >/dev/null 2>&1 < /dev/null &
+  python3 -c "$DETACH_PY" "$(compgen -e | tr '\n' ' ')" \
+    "$NEW" -o allow_remote_control=socket-only --listen-on "$SOCK" --session "$SESSION" >/dev/null 2>&1 < /dev/null &
 fi
 for _ in $(seq 1 50); do kls >/dev/null && break; sleep 0.2; done
 if ! kls >/dev/null; then

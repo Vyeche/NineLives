@@ -53,10 +53,12 @@ the official kitty `.dmg`). It uses what a Mac has out of the box: `/bin/bash` 3
 zsh, BSD tools and kitty.app's folder on `PATH`. It runs every unit test (no macOS test may be
 skipped, the zsh ones included), installs and uninstalls into a temp folder with kitty's config check,
 checks where the socket goes, that `afinfo` reads the `.wav` sounds and `osascript` gets the
-notification text unchanged, runs `tests/live_agent_lookup.py` with kitty's macOS helpers, and, where
-the runner can open a window, starts the real kitty with NineLives' config: its socket, `kitty @ ls`,
+notification text unchanged, runs `tests/live_agent_lookup.py` with kitty's macOS helpers, and last,
+on a Mac with a display, starts the real kitty with NineLives' config: its socket, `kitty @ ls`,
 `kitty-tabs.py sockets` and `kitty-pid`, the `✳` mark in `sidebar.txt`, and a restart that brings both
-tabs back. It opens a kitty window of its own and restarts it, sends one test notification and plays
+tabs back. **On the Gauntlet that last part never runs:** GitHub's macOS runners have no OpenGL 3.3
+(kitty asks for a hardware renderer: "NSGL: Failed to find a suitable pixel format"), so it is skipped
+with a warning, and a running kitty on a Mac is untested until someone runs this on a real Mac. It opens a kitty window of its own and restarts it, sends one test notification and plays
 one near-silent sound (your kitty config is left alone). A CI machine is not a Mac on a desk: hearing
 the sounds, seeing notifications, the look on a Mac's screen and dragging tabs are untested, and
 nobody has run NineLives on a real Mac yet.

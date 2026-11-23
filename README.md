@@ -27,7 +27,8 @@ Spinning ◐ = working · ✓ = finished · amber block ⚠ = **needs you** · �
 - **macOS: new, and not yet tried on a real Mac.** Everything that used Linux tools now has a macOS
   way (sounds with `afplay`, notifications with `osascript`, agent marks and the restart without
   `/proc`, kitty's socket in your temp folder). A macOS lane in the Gauntlet runs what can be checked on a
-  CI machine; no one has used it on a real Mac yet. [What is checked, what isn't, and what to tell us](docs/wiki/Installing.md#macos).
+  CI machine, but it can't start kitty there (no OpenGL), so the sidebar, socket and restart are
+  untested on a Mac. Mac users: please run `bash scripts/check-macos.sh` and tell us. [What is checked, what isn't, and what to tell us](docs/wiki/Installing.md#macos).
 - Only for development: `Xvfb` and `ffmpeg` (the hidden test kitty and the sound checks).
 
 ## Install

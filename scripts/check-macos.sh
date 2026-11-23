@@ -11,8 +11,10 @@
 # temp folder, with kitty's config check · the sounds (afplay's formats) · notifications (osascript)
 # · tab_bar.py's agent lookup against real processes (kitty's Python, its macOS helpers) · last, the
 # real kitty: does it start with NineLives' config, is its socket where ninelives-macos.conf says,
-# does the sidebar find an agent, and does kitty-relaunch.sh bring every tab back. A runner where
-# kitty can't open a window skips that last part with a warning.
+# does the sidebar find an agent, and does kitty-relaunch.sh bring every tab back. That last part
+# needs a Mac with a display: GitHub's macOS runners have no OpenGL 3.3 (kitty asks for a hardware
+# renderer and fails with "NSGL: Failed to find a suitable pixel format"), so on the Gauntlet it
+# is skipped with a warning and only runs when you run this on your own Mac.
 set -uo pipefail
 [ "$(uname -s)" = Darwin ] || { echo "check-macos.sh is for macOS (Linux: bash scripts/check.sh)"; exit 2; }
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -95,8 +97,8 @@ left="$(find "$DEST" -type f 2>/dev/null | sed "s|^$DEST/||" | tr '\n' ' ')"
 echo "Sounds"
 python3 scripts/make-sounds.py --wav "$TMP/wav" >/dev/null
 if afinfo "$TMP/wav/done.wav" >/dev/null 2>&1; then ok "afinfo reads the .wav sounds install.sh makes"; else fail "afinfo can't read done.wav"; fi
-if afinfo config/sounds/done.oga >/dev/null 2>&1; then note "afinfo reads .oga here (the .wav copies would not be needed)"
-else note "afinfo can't read .oga: hence the .wav copies"; fi
+if afinfo config/sounds/done.oga >/dev/null 2>&1; then note "afinfo reads .oga on this macOS (older ones don't: NineLives plays the .wav copies everywhere)"
+else note "afinfo can't read .oga here: hence the .wav copies"; fi
 if afplay -v 0.0001 -t 0.2 "$TMP/wav/drop.wav" >/dev/null 2>&1; then ok "afplay plays a .wav (almost silently: -v 0.0001)"
 else warn "afplay failed (no audio device on this runner?)"; fi
 
@@ -144,7 +146,10 @@ if ! [ -S "$S" ] && alive "$KPID"; then
   fail "kitty runs but has no socket at $S (there: $(cd "${S%/*}" && echo ninelives-kitty-*))"
   sed 's/^/        /' "$K/kitty.log" | tail -15
 elif ! [ -S "$S" ]; then
-  warn "kitty didn't come up here (it exited: no window on this runner?): skipping the real-kitty checks"
+  if grep -qiE "suitable pixel format|OpenGL" "$K/kitty.log"; then
+    warn "kitty can't open a window here: no OpenGL 3.3 (as on GitHub's macOS runners). NOT CHECKED: kitty's"
+    note "socket, kitty @ ls, the sidebar's agent mark and the restart. Run this on a Mac with a display."
+  else warn "kitty didn't start here (it exited; its log is below): the real-kitty checks did not run"; fi
   sed 's/^/        /' "$K/kitty.log" | tail -15
 else
   SOCK="unix:$S"

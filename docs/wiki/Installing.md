@@ -111,7 +111,7 @@ use Homebrew's). Install as on Linux (`bash scripts/install.sh`), put the tip li
 What is different on a Mac:
 | Part | On Linux | On macOS |
 | --- | --- | --- |
-| Sounds | `paplay` plays `sounds/*.oga` | `afplay` plays `.wav` copies: as far as we know `afplay` can't play `.oga`, so `install.sh` makes a `.wav` of each sound (`scripts/make-sounds.py`). The volume is meant to match Linux (not compared by ear yet). `kitty-sounds classic` uses macOS's own Glass, Ping and Basso |
+| Sounds | `paplay` plays `sounds/*.oga` | `afplay` plays `.wav` copies: older macOS can't play `.oga` (macOS 15 can, the lane found), so `install.sh` makes a `.wav` of each sound (`scripts/make-sounds.py`). The volume is meant to match Linux (not compared by ear yet). `kitty-sounds classic` uses macOS's own Glass, Ping and Basso |
 | Notifications (badges) | `gdbus` to the desktop | `osascript`; macOS may show them as coming from "Script Editor" and ask you once to allow its notifications |
 | Agent marks (`✳`, `π`) and the spinner for plain commands | `/proc` | kitty's own process helpers (the ones `kitty @ ls` uses on a Mac) |
 | Remote-control socket | `$XDG_RUNTIME_DIR/ninelives-kitty-<pid>` | `$TMPDIR/ninelives-kitty-<pid>` (macOS has no `XDG_RUNTIME_DIR`; `ninelives-macos.conf`, which only a Mac's kitty reads, sets this) |
@@ -125,10 +125,15 @@ What is different on a Mac:
 `tips.sh` in zsh and bash 3.2 and the restart without `setsid` or `flock`; `install.sh` and
 `uninstall.sh` with kitty's config check, and where the socket goes; that `afinfo` reads the `.wav`
 sounds; that `osascript` gets the notification text unchanged; the agent lookup against real
-processes with kitty's macOS helpers; and, where the runner can open a window, a real kitty with
-NineLives' config: its socket, the `✳` mark in the sidebar, and a restart that brings both tabs back.
-**Not checked anywhere yet:** hearing a sound, seeing a notification, the look of the sidebar on a
-Mac's screen (Retina, fonts), dragging tabs (kitty's own drag on macOS), and daily use.
+processes with kitty's macOS helpers (the `✳` lookup itself).
+**The lane can't start kitty:** GitHub's macOS runners have no OpenGL 3.3, so kitty can't open a
+window there. So **a running kitty on a Mac is untested**: its socket appearing in `$TMPDIR`, the
+sidebar drawing and its marks, the tab search and Ctrl+Alt+U over that socket, and the restart
+(`kitty-relaunch.sh` as a whole). `bash scripts/check-macos.sh` on your own Mac does that part too
+(it starts a kitty window of its own, checks the socket, the `✳` mark and a restart, then closes it):
+**please run it and post the output** in an issue. Also not checked anywhere yet: hearing a sound,
+seeing a notification, the look of the sidebar on a Mac's screen (Retina, fonts), dragging tabs
+(kitty's own drag on macOS), and daily use.
 
 If your own kitty config lives in `~/Library/Preferences/kitty`, kitty uses `~/.config/kitty` once
 NineLives is installed there (it looks there first); `uninstall.sh` gives yours back.
