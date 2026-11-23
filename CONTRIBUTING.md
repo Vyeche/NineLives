@@ -37,6 +37,11 @@ PR's code runs with a read-only token and no secrets. HOL Guard's repository sca
 (and weekly), not on pull requests. A PR is merged once the Gauntlet is green and the change has
 been reviewed.
 
+## Code review
+[CodeRabbit](https://coderabbit.ai) reviews every pull request to `main` and leaves comments; its
+settings are in `.coderabbit.yaml`, which points it at the rules in AGENTS.md and PRODUCT.md. Reply
+to a comment with `@coderabbitai` to ask it something. Its review is advice: the maintainer decides.
+
 ## Style
 - Plain, friendly, short words in everything people read (docs, tips, messages).
 - Keep README, the wiki (`docs/wiki/`, with a line in `Whats-New.md`), the F1 sheet
