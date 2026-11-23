@@ -4,7 +4,7 @@
 # with ffmpeg. Sounds and notifications go to stubs and quests get their own state folder, so
 # nothing reaches your real kitty, speakers or badges. X11 only: the Wayland tab drag and the
 # background blur are not exercised.
-#   bash scripts/test-kitty.sh start [dark|light] [WIDTHxHEIGHT]   start it and fill the sidebar
+#   bash scripts/test-kitty.sh start [dark|light] [WIDTHxHEIGHT] [FONT_SIZE]   start it and fill the sidebar
 #   bash scripts/test-kitty.sh shot NAME [ffmpeg filter]           screenshot (default: sidebar, 2x)
 #   bash scripts/test-kitty.sh k <kitty @ arguments>               drive it, e.g. k focus-tab --match index:6
 #   bash scripts/test-kitty.sh sounds                              which sounds it would have played
@@ -47,7 +47,8 @@ tab() {  # tab FOLDER [command typed into it]
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
 start)
-  theme="${1:-dark}"; size="${2:-1100x760}"
+  theme="${1:-dark}"; size="${2:-1100x760}"; font="${3:-}"
+  [[ -z "$font" || "$font" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "font size: a number, e.g. 20" >&2; exit 2; }
   case "$theme" in dark|light) ;; *) echo "theme: dark or light" >&2; exit 2 ;; esac
   for need in Xvfb ffmpeg kitty; do command -v "$need" >/dev/null || { echo "needs $need" >&2; exit 1; }; done
   stop
@@ -86,12 +87,12 @@ ST
   sleep 1
   tenv setsid kitty -o allow_remote_control=socket-only -o remember_window_size=no \
       -o initial_window_width="${size%x*}" -o initial_window_height="${size#*x}" \
-      -o confirm_os_window_close=0 --listen-on "$SOCK" --directory "$W/webapp" \
+      -o confirm_os_window_close=0 ${font:+-o font_size="$font"} --listen-on "$SOCK" --directory "$W/webapp" \
       bash --norc > "$T/kitty.log" 2>&1 &
   echo $! > "$T/kitty.pid"
   for _ in $(seq 1 40); do k ls >/dev/null 2>&1 && break; sleep 0.25; done
   k ls >/dev/null 2>&1 || { echo "kitty did not start:" >&2; tail -5 "$T/kitty.log" >&2; exit 1; }
-  if [ "${NL_TEST_SCENE:-}" = none ]; then echo "Test kitty running ($theme, $size), one empty tab."; exit 0; fi
+  if [ "${NL_TEST_SCENE:-}" = none ]; then echo "Test kitty running ($theme, $size${font:+, font $font}), one empty tab."; exit 0; fi
   # one tab per status
   # one tab per status (status, then where the sidebar gets it from)
   tab "$W/webapp" "npm run build"                                         # plain command running
@@ -106,7 +107,7 @@ ST
   k set-tab-title --match "index:9" "A renamed tab with quite a long title here"
   tab "$W/notes" "st title '日本語のメモ 🚀 wide characters'"
   k focus-tab --match index:0
-  echo "Test kitty running ($theme, $size). Screenshot: bash scripts/test-kitty.sh shot NAME"
+  echo "Test kitty running ($theme, $size${font:+, font $font}). Screenshot: bash scripts/test-kitty.sh shot NAME"
   ;;
 shot)
   name="${1:?shot NAME}"; vf="${2:-crop=330:ih:0:0,scale=iw*2:ih*2:flags=neighbor}"

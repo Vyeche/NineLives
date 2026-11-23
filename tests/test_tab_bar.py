@@ -303,6 +303,119 @@ class Buttons(TabBarCase):
         self.assertFalse(self.tb._sidebar_click(tm, c0 * 10 + 5, 5, 0, 2))
         self.assertEqual(len(ran), 1)
 
+class NarrowSidebar(TabBarCase):
+    """A small window or a big font makes kitty's sidebar narrower (at most a third of the window):
+    the search row, its buttons, "+ New tab" and the × follow the real width."""
+    GLYPH = {"search": None, "waiting": "⚠", "new": "+"}
+
+    def test_search_row_fits_every_width_and_keeps_its_buttons(self):
+        for waiting in (0, 1, 12):
+            for width in range(5, 41):          # kitty's sidebar is 6+ columns: 5+ cells a line
+                text, cols = self.tb._row_layout(width, waiting)
+                row = self.tb._visible(text)
+                where = (width, waiting, row)
+                self.assertEqual(self.tb._cells(row), width, where)
+                self.assertEqual(row[width - 1], "+", where)          # + in the × column
+                # one of the labels, then the buttons: never an ellipsis eating a button
+                self.assertRegex(row, r"^(  ❯   Search tabs…|  ❯   Search…|  ❯   Find…|  ❯)? *(⚠\d+ {1,2})?\+$", where)
+                if width >= 4 + len(str(waiting)) and waiting:          # " ⚠N +"
+                    self.assertIn(f"⚠{waiting}", row, where)
+                last = -1
+                for c0, c1, name in cols:
+                    if c1 < c0:
+                        continue                                      # no room for the words
+                    self.assertGreater(c0, last, where)               # in order, never overlapping
+                    last = c1
+                    if self.GLYPH[name]:
+                        self.assertIn(self.GLYPH[name], row[max(0, c0):c1 + 1], (name,) + where)
+                    if name == "waiting":
+                        self.assertEqual(row[c0 + 1], "⚠", where)    # sidebar.txt points at c0 + 1
+                    if name == "new":
+                        self.assertEqual(c0 + 1, width - 1, where)
+
+    def test_shorter_words_before_losing_any(self):
+        rows = {w: self.tb._visible(self.tb._row_layout(w, 1)[0]) for w in (30, 20, 16, 12, 5)}
+        self.assertIn("Search tabs…", rows[30])
+        self.assertIn("Search…", rows[20])
+        self.assertIn("Find…", rows[16])
+        self.assertEqual(rows[12], "  ❯    ⚠1  +")
+        self.assertEqual(rows[5], " ⚠1 +")
+        self.assertEqual(self.tb._visible(self.tb._row_layout(4, 1)[0]), "   +")   # + before ⚠
+
+    def test_full_width_looks_as_before(self):
+        left = "  ❯   Search tabs…"
+        self.assertEqual(self.tb._row_layout(30, 0), (left + " " * 11 + "+", [(0, 27, "search"), (28, 30, "new")]))
+        text, cols = self.tb._row_layout(30, 2)
+        self.assertEqual(self.tb._visible(text), left + " " * 7 + "⚠2  +")
+        self.assertEqual(cols, [(0, 23, "search"), (24, 27, "waiting"), (28, 30, "new")])
+        cat = self.tb._cat_face()
+        self.assertEqual(self.tb._new_tab_label(30).split("\n")[0],
+                         "  +   New tab" + " " * (28 - 13 - self.tb._cells(cat)) + cat)
+
+    def bar(self, columns, wid=1):
+        R = types.SimpleNamespace
+        return R(screen=R(columns=columns, lines=40), os_window_id=wid)
+
+    def test_line_width_is_what_kitty_gives_a_tab(self):
+        # kitty: max_title_length = min(sidebar columns - 1, tab_title_max_length)
+        self.assertEqual(self.tb._line_width(self.bar(31)), 30)
+        self.assertEqual(self.tb._line_width(self.bar(22)), 21)
+        sys.modules["kitty.fast_data_types"].get_options = lambda: types.SimpleNamespace(tab_title_max_length=40)
+        self.assertEqual(self.tb._line_width(self.bar(31)), 30)
+        self.assertEqual(self.tb._line_width(self.bar(50)), 40)
+        sys.modules["kitty.fast_data_types"].get_options = lambda: types.SimpleNamespace(tab_title_max_length=0)
+        self.assertEqual(self.tb._line_width(self.bar(50)), 49)       # no limit set: the sidebar's
+        self.assertEqual(self.tb._line_width(None), self.tb.ROW_WIDTH)  # unknown: as before
+
+    def test_own_rows_are_made_for_each_windows_sidebar(self):
+        import collections
+        Row = collections.namedtuple("Row", "title tab_id is_active")
+        self.tb._cat["blocked"] = 1
+        data = (Row("wide", -2, False), Row("tab", 5, True), Row("  +   New tab", -1, False))
+        narrow = self.tb._fit_own_rows(self.bar(17, wid=1), data)
+        wide = self.tb._fit_own_rows(self.bar(31, wid=2), data)
+        self.assertEqual(narrow[1], data[1])
+        for rows, width in ((narrow, 16), (wide, 30)):
+            for r in (rows[0], rows[2]):
+                for line in self.tb._visible(r.title).split("\n"):
+                    self.assertLessEqual(self.tb._cells(line), width, line)
+            self.assertRegex(self.tb._visible(rows[0].title), r"⚠1 {1,2}\+$")
+        self.assertEqual(self.tb._cols_for(1)[-1], (14, 16, "new"))
+        self.assertEqual(self.tb._cols_for(2)[-1], (28, 30, "new"))
+        # a click on the narrow window's + is the new-tab button there, not search
+        R = types.SimpleNamespace
+        ext = [R(tab_id=-2, y=R(start=0, end=0))]
+        bar = R(window_geometry=R(left=0, right=170, top=0, bottom=400), cell_width=10, cell_height=20,
+                tab_extents=ext)
+        tm = R(tab_bar=bar, active_tab=None, os_window_id=1)
+        self.assertEqual(self.tb._region(tm, 155, 5), ("button", "new"))
+        self.assertEqual(self.tb._region(tm, 135, 5), ("button", "waiting"))
+
+    def test_new_tab_label_fits(self):
+        for width in range(5, 31):
+            for line in self.tb._visible(self.tb._new_tab_label(width)).split("\n"):
+                self.assertLessEqual(self.tb._cells(line), width, (width, line))
+        self.assertTrue(self.tb._new_tab_label(16).startswith("  +"))
+
+    def test_close_button_follows_the_title_width(self):
+        a, b = FakeTab(), FakeTab()
+        tm = self.window(a, b, active=0)
+        d = Draw.data(self, a, 1, "my work", "/w/x")
+        d["max_title_length"] = 20
+        line1 = Draw.strip(self.tb.draw_title(d).split("\n")[0])
+        self.assertEqual(self.tb._cells(line1), 20)
+        self.assertEqual(line1.index("×"), 19)
+        self.assertEqual(self.tb._buttons["close_cols"][a.id], 19)
+        # the close button is found per tab: another window's current tab has its own column
+        R = types.SimpleNamespace
+        self.tb._buttons["close_row"] = {1: 2}
+        bar = R(window_geometry=R(left=0, right=210, top=0, bottom=400), cell_width=10, cell_height=20,
+                tab_extents=[R(tab_id=a.id, y=R(start=2, end=3))])
+        tm.tab_bar = bar
+        self.assertEqual(self.tb._region(tm, 195, 45), ("close",))
+        self.assertIsNone(self.tb._region(tm, 100, 45))
+
+
 class ConfigFolder(TabBarCase):
     def test_follows_kittys_config_folder(self):
         # a second kitty with its own config folder (dev-kitty.sh) keeps its own switches and sounds
@@ -358,6 +471,20 @@ class Text(TabBarCase):
         self.assertEqual(n("⠋ omp: refactor", "/w"), "omp: refactor")
         self.assertEqual(n("✳ Fix the login bug", "/w"), "Fix the login bug")
         self.assertEqual(n("π ⠋ task", "/w"), "π task")
+
+    def test_a_bare_shell_title_shows_the_folder(self):
+        # a plain tab kitty-relaunch reopened (bash -lc 'exec bash') has no title of its own: kitty
+        # names the window "bash", and before the restart the sidebar showed the folder
+        n = self.tb._tab_name
+        for title in ("bash", "zsh", "-bash", "fish"):
+            self.assertEqual(n(title, "/w/proj"), "proj", title)
+        self.assertEqual(n("bash-scripts", "/w/proj"), "bash-scripts")
+        self.assertEqual(n("✳ bash", "/w/proj"), "bash")              # Claude's title stays a title
+        renamed, plain = FakeTab(), FakeTab()
+        renamed.name, plain.name = "bash", ""
+        self.window(renamed, plain)
+        self.assertEqual(n("bash", "/w/proj", renamed.id), "bash")    # you named it that: kept
+        self.assertEqual(n("bash", "/w/proj", plain.id), "proj")
 
     def test_tab_folder_uses_tilde_and_two_levels(self):
         home = self.tb.HOME

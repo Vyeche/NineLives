@@ -356,9 +356,28 @@ def _fit_start(s: str, width: int) -> str:
     return "…" + s
 
 
-def _tab_name(title: str, wd: str) -> str:
+SHELL_NAMES = {"bash", "sh", "zsh", "fish", "dash", "ksh", "tcsh"}
+
+
+def _renamed(tab_id) -> bool:
+    """True if you gave the tab its own name (Ctrl+Shift+R; kitty keeps it in Tab.name)."""
+    try:
+        for tm in get_boss().all_tab_managers:
+            for tab in tm:
+                if tab.id == tab_id:
+                    return bool(getattr(tab, "name", ""))
+    except Exception:
+        pass
+    return False
+
+
+def _tab_name(title: str, wd: str, tab_id=None) -> str:
     # A plain shell's title is its folder ("~/…", "/…", "user@host: …"): show the folder's name.
-    if title[:1] in ("", "~", "/") or (USER_AT != "@" and title.startswith(USER_AT)):
+    # So is a bare shell name: with nothing setting a title kitty names the window after its program,
+    # "bash", as in a plain tab kitty-relaunch reopened (`bash -lc 'exec bash'` gets no shell
+    # integration). A tab you renamed "bash" yourself keeps that name.
+    if title[:1] in ("", "~", "/") or (USER_AT != "@" and title.startswith(USER_AT)) or (
+            title.strip().lstrip("-") in SHELL_NAMES and not _renamed(tab_id)):
         return wd.rstrip("/").rsplit("/", 1)[-1] or "/"
     # omp/opencode put their own spinner in front of the title; ours is in the status slot.
     title = TOOL_SPINNER_RE.sub(lambda m: "π " if "π" in m.group() else "", title, count=1)
@@ -418,7 +437,7 @@ def _draw_title(data) -> str:
         wd = ""
     icon, kind, extra = _status(data)
     slot = icon if _cells(icon) >= 2 else (icon + "  ")[:2]
-    name = (data.get("bell_symbol") or "") + extra + _tab_name(data.get("title") or "", wd)
+    name = (data.get("bell_symbol") or "") + extra + _tab_name(data.get("title") or "", wd, data.get("tab_id"))
     tab_fg = fmt.fg.tab
     active = _is_active(data.get("tab_id"))
     base = kind.partition("-")[0]
@@ -445,12 +464,13 @@ def _draw_title(data) -> str:
     room = max(1, width - INDENT)
     if active and _buttons_on() and room > 8:
         # the current tab gets a × at its right end: click it to close the tab (_sidebar_click)
+        # (width is kitty's max_title_length: the sidebar's real width, narrower in a small window)
         shown = _fit(name, room - 2)
-        _buttons["close_col"] = INDENT + room - 1
+        _buttons.setdefault("close_cols", {})[data.get("tab_id")] = INDENT + room - 1
         line1 = f"{head}{slot}{tab_fg}{name_fg}{shown}{' ' * (room - 1 - _cells(shown))}×{tab_fg}"
     else:
         if active:
-            _buttons["close_col"] = None           # no × drawn: nothing to click
+            _buttons.setdefault("close_cols", {}).pop(data.get("tab_id"), None)   # no ×: nothing to click
         line1 = f"{head}{slot}{tab_fg}{name_fg}{_fit(name, room)}{tab_fg}"
     folder, took = _tab_folder(wd), _elapsed(data.get("tab_id"), kind)
     branch = _git_branch(wd)
@@ -630,7 +650,7 @@ def _tick(timer_id=None) -> None:
             if wid not in seen:
                 del _prev_state[wid]
         tab_ids = {tab.id for tm in boss.all_tab_managers for tab in tm}
-        for d in (_since, _sparkle_start, _blocked_since, _running):   # closed tabs
+        for d in (_since, _sparkle_start, _blocked_since, _running, _buttons.setdefault("close_cols", {})):   # closed tabs
             for tid in [t for t in d if t not in tab_ids]:
                 del d[tid]
         _reminded.intersection_update(tab_ids)
@@ -986,6 +1006,7 @@ def _fit_vertical(bar, orig, data, *a, **k) -> tuple:
     (_pick_tabs) and name the hidden ones on the line under them (a click there goes to the first
     hidden tab: _hidden_line_click). Returns (kitty's result, how many tabs are hidden)."""
     import kitty.tab_bar as kt
+    data = _fit_own_rows(bar, data)
     # tabs keep their real numbers (Alt+N means the Nth tab): kitty numbers every entry it draws,
     # the search row on top and hidden tabs included
     nums = {t.tab_id: n for n, t in enumerate((t for t in data if t.tab_id > 0), 1)}
@@ -1023,6 +1044,25 @@ def _fit_vertical(bar, orig, data, *a, **k) -> tuple:
     return r, len(hidden) if bar._vye_hidden else 0
 
 
+def _fit_own_rows(bar, data):
+    """Our own rows (the search row, "+ New tab") are drawn as they are, so make them for the
+    sidebar's real width (_line_width): a small window or a big font makes kitty's sidebar narrower,
+    and kitty would cut the buttons off the end with … (and clicks would miss them)."""
+    try:
+        width = _line_width(bar)
+        wid = getattr(bar, "os_window_id", None)
+        out = []
+        for t in data:
+            if t.tab_id == SEARCH_ROW_ID:
+                t = t._replace(title=_search_row(width, wid) or t.title)
+            elif t.tab_id < 0 and t.title != "+":    # kitty's bare + is left alone: no label patch
+                t = t._replace(title=_new_tab_label(width))
+            out.append(t)
+        return tuple(out)
+    except Exception:
+        return data
+
+
 def _note_close_row(bar, data) -> None:
     """Which row the current tab's first line (with its ×) is on, for _sidebar_click."""
     try:
@@ -1035,7 +1075,8 @@ def _note_close_row(bar, data) -> None:
 
 # ---- The search row and buttons (like Warp's sidebar) ----------------------------------------------
 # A row on top of the sidebar:  "  ❯   Search tabs…     ⚠2  +"  — click the words to search (the
-# Ctrl+Shift+Space box), ⚠ for the tab waiting for you (Ctrl+Alt+U), + for a new tab. The tab you're
+# Ctrl+Shift+Space box), ⚠ for the tab waiting for you (Ctrl+Alt+U), + for a new tab. A narrow
+# sidebar (small window, big font) gets shorter words; ⚠ and + always stay whole. The tab you're
 # on has a × at its right end that closes it (kitty can't tell where the mouse hovers, so it's the
 # current tab that gets it). kitty-buttons off hides the row and the ×.
 SEARCH_ROW_ID = -2           # a made-up entry like kitty's own "+" (-1); our click hook handles it
@@ -1047,33 +1088,82 @@ ACTIONS = {   # the same actions as the keys in kitty.conf
     "new": "new_tab_with_cwd",
     "close": "close_tab",
 }
-ROW_WIDTH = 30               # = tab_title_max_length: + lands in the same column as the current tab's ×
-_buttons: dict = {}          # what the search row's columns do: [(first col, last col, action)]
+ROW_WIDTH = 30               # = tab_title_max_length: the row's width when nothing narrows the sidebar
+_buttons: dict = {}          # what the search row's columns do (per kitty window), the × columns (per tab)
+# the words in front of the buttons, longest first: a narrow sidebar (a small window, a big font)
+# gets a shorter one, and the buttons always stay whole
+SEARCH_LABELS = ("  ❯   Search tabs…", "  ❯   Search…", "  ❯   Find…", "  ❯", "")
 
 
 def _buttons_on() -> bool:
     return not os.path.exists(BUTTONS_OFF)
 
 
-def _search_row() -> str:
-    """The row's text (kitty draws it as is), and where its buttons are."""
+def _line_width(bar=None) -> int:
+    """How many cells a sidebar line can use. kitty makes the sidebar tab_title_max_length + 1
+    columns wide, but never more than a third of the window (state.c, vertical_tab_bar_cols), and
+    gives each tab min(columns - 1, tab_title_max_length) cells (its max_title_length). Our own
+    rows (search, "+ New tab") are drawn as they are, so they're cut to the same width here."""
+    try:
+        if bar is None:
+            bar = get_boss().active_tab_manager.tab_bar
+        width = int(bar.screen.columns) - 1
+    except Exception:
+        return ROW_WIDTH
+    try:
+        from kitty.fast_data_types import get_options
+        cap = int(get_options().tab_title_max_length)
+    except Exception:
+        cap = ROW_WIDTH
+    if cap > 0:
+        width = min(width, cap)
+    return max(1, width)
+
+
+def _row_layout(width: int, waiting: int) -> tuple:
+    """(the search row's text, [(first col, last col, action)]) for a row `width` cells wide.
+    + is in the last column (where the current tab's × is), ⚠N (tabs waiting) in front of it; the
+    words get whatever room is left: the full label, a shorter one, only ❯, or nothing."""
+    warn = f"⚠{waiting}" if waiting else ""
+    for left in SEARCH_LABELS:
+        for sep in ("  ", " "):                    # between ⚠N and +
+            right = f"{warn}{sep}+" if warn else "+"
+            if _cells(left) + 1 + _cells(right) <= width:       # (a blank cell before ⚠ and +)
+                break
+        else:
+            continue
+        break
+    else:
+        left, sep, warn = "", "", ""                # no room even for ⚠N: + alone
+    plus = max(0, width - 1)
+    if not warn:
+        gap = max(0, plus - _cells(left))
+        return f"{left}{' ' * gap}+", [(0, plus - 2, "search"), (plus - 1, width, "new")]
+    wc = plus - len(sep) - _cells(warn)              # where ⚠ is
+    gap = max(0, wc - _cells(left))
+    cols = [(0, wc - 2, "search"), (max(0, wc - 1), plus - 2, "waiting"), (plus - 1, width, "new")]
+    return f"{left}{' ' * gap}{AMBER}{warn}{FG}{sep}+", cols
+
+
+def _search_row(width=None, wid=None) -> str:
+    """The row's text (kitty draws it as is), and where its buttons are. Called without arguments
+    by the "+ New tab" patch (which may be an older load's), then again by _fit_vertical with the
+    sidebar's real width."""
     if not _buttons_on():
         return ""
-    # ❯ sits in the number column like "+ New tab"'s +, and is the search box's own prompt mark
-    left = "  ❯   Search tabs…"
-    n = _cat.get("blocked", 0)
-    if not n:
-        # nothing waiting: no ⚠ at all (a grey hazard sign with nothing behind it only puzzles)
-        gap = max(1, ROW_WIDTH - _cells(left) - 1)
-        _buttons["cols"] = [(0, ROW_WIDTH - 3, "search"), (ROW_WIDTH - 2, ROW_WIDTH, "new")]
-        return f"{left}{' ' * gap}+"
-    # tabs are waiting: an amber ⚠ with the count (amber means "needs you" everywhere); click = go there
-    warn_txt = f"⚠{n}"
-    gap = max(1, ROW_WIDTH - _cells(left) - _cells(warn_txt) - 3)
-    wc = _cells(left) + gap                        # where ⚠ starts; "  +" ends at the right edge
-    _buttons["cols"] = [(0, wc - 2, "search"), (wc - 1, wc + _cells(warn_txt), "waiting"),
-                        (wc + _cells(warn_txt) + 1, wc + _cells(warn_txt) + 3, "new")]
-    return f"{left}{' ' * gap}{AMBER}{warn_txt}{FG}  +"
+    # ❯ sits in the number column like "+ New tab"'s +, and is the search box's own prompt mark.
+    # Nothing waiting: no ⚠ at all (a grey hazard sign with nothing behind it only puzzles); tabs
+    # waiting: an amber ⚠ with the count (amber means "needs you" everywhere); click = go there.
+    text, cols = _row_layout(width or ROW_WIDTH, _cat.get("blocked", 0))
+    _buttons["cols"] = cols
+    if wid is not None:
+        _buttons.setdefault("cols_by", {})[wid] = cols
+    return text
+
+
+def _cols_for(wid) -> list:
+    """The search row's buttons as last drawn in this kitty window."""
+    return _buttons.get("cols_by", {}).get(wid) or _buttons.get("cols", ())
 
 
 _clicking = {"on": False}
@@ -1107,9 +1197,9 @@ def _region(tm, x, y):
     if ext is None:
         return None
     if ext.tab_id == SEARCH_ROW_ID:
-        return ("button", next((a for c0, c1, a in _buttons.get("cols", ()) if c0 <= col <= c1), "search"))
+        return ("button", next((a for c0, c1, a in _cols_for(tm.os_window_id) if c0 <= col <= c1), "search"))
     at = tm.active_tab
-    close_col = _buttons.get("close_col")
+    close_col = _buttons.get("close_cols", {}).get(at.id) if at is not None else None
     if (at is not None and ext.tab_id == at.id and close_col is not None and _buttons_on()
             and row == _buttons.get("close_row", {}).get(tm.os_window_id, -1) and col >= close_col - 1):
         return ("close",)
@@ -1192,11 +1282,21 @@ def _note_layout(bar, data, shown_ids, hidden) -> None:
             text += f"click: {px(4, info[0])}\n"
         top = next((e for e in bar.tab_extents if e.tab_id == SEARCH_ROW_ID), None)
         if top is not None:                         # where the search row's buttons are (check.sh)
-            for c0, c1, name in _buttons.get("cols", ()):
+            for c0, c1, name in _cols_for(wid):
                 text += f"button {name}: {px((c0 + c1) // 2 if name == 'search' else c0 + 1, top.y.start)}\n"
+        at = next((t.tab_id for t in data if t.tab_id > 0 and t.is_active), None)
+        close_col = _buttons.get("close_cols", {}).get(at)
         crow = _buttons.get("close_row", {}).get(wid, -1)
-        if crow >= 0 and _buttons.get("close_col") is not None and _buttons_on():
-            text += f"button close: {px(_buttons['close_col'], crow)}\n"
+        if crow >= 0 and close_col is not None and _buttons_on():
+            text += f"button close: {px(close_col, crow)}\n"
+        # what kitty really drew there, read back from the sidebar's cells, so check.sh can compare
+        # it with the columns above: the column of each glyph, and the sidebar's cell grid
+        text += f"cells: {g.left} {g.top} {bar.cell_width} {bar.cell_height} {bar.screen.columns}\n"
+        for row, glyphs in ((top.y.start if top is not None else -1, "⚠+"), (crow, "×")):
+            line = _screen_text(bar, row)
+            for ch in glyphs:
+                if ch in line:
+                    text += f"drawn {ch}: {_cells(line[:line.index(ch)])}\n"
         if _layout_noted.get(wid) == text:
             return
         _layout_noted[wid] = text
@@ -1206,6 +1306,14 @@ def _note_layout(bar, data, shown_ids, hidden) -> None:
         _write_atomic(os.path.join(QUEST_DIR, "sidebar.txt"), text)
     except Exception:
         pass
+
+
+def _screen_text(bar, row: int) -> str:
+    """The text kitty drew on one row of the sidebar ("" if unknown)."""
+    try:
+        return str(bar.screen.line(row)) if 0 <= row < bar.screen.lines else ""
+    except Exception:
+        return ""
 
 
 def _number_ranges(nums) -> str:
@@ -1346,20 +1454,28 @@ def _visible(s: str) -> str:
     return re.sub("\x1b\\[[0-9;]*m", "", s)
 
 
-def _new_tab_label() -> str:
+NEW_TAB_LABELS = (NEW_TAB_LABEL, "  +   New", "  +")   # shorter ones for a narrow sidebar
+
+
+def _new_tab_label(width=None) -> str:
     """ "+ New tab" with the cat at its right end, and under it the next quest (or the badge
-    just earned)."""
-    line1, line2 = NEW_TAB_LABEL, ""
+    just earned), both fitted to `width` cells (the sidebar's; ROW_WIDTH if not known)."""
+    width = width or ROW_WIDTH
+    line1, line2 = _fit(NEW_TAB_LABEL, width), ""
     try:
         cat = _cat_face()
         _cat["drawn"] = cat
         if cat:
-            gap = max(2, 28 - _cells(NEW_TAB_LABEL) - _cells(_visible(cat)))
-            line1 = NEW_TAB_LABEL + " " * gap + cat
+            # the cat ends 2 cells short of the right edge; a narrow sidebar shortens the words
+            # first (the + says it), then leaves the cat out
+            end = max(0, width - 2)
+            label = next((l for l in NEW_TAB_LABELS if _cells(l) + 2 + _cells(_visible(cat)) <= end), None)
+            if label is not None:
+                line1 = label + " " * (end - _cells(label) - _cells(_visible(cat))) + cat
     except Exception:
         pass
     try:
-        line2 = _quest_line()
+        line2 = _quest_line(width)
     except Exception:
         pass
     return line1 + ("\n" + line2 if line2 else "")
@@ -1676,23 +1792,27 @@ def _tab_clicked(tm, x, y, button, action) -> None:
         pass
 
 
-def _quest_line() -> str:
-    """The line under "+ New tab": the badge just earned (sparkling), else the next quest."""
+def _quest_line(width=None) -> str:
+    """The line under "+ New tab": the badge just earned (sparkling), else the next quest. Cut to
+    `width` cells (the mark and its gap are 6)."""
     if os.path.exists(QUESTS_OFF):
         return ""
+    room = (width or ROW_WIDTH) - 6
     now = time.monotonic()
     n = len(_earned)
+    if room < 2:                                   # no room for words: the ★ count alone
+        return f"{GOLD}{'★' + str(n):>3}{FG}"
     if _badge_shown["until"] > now and _badge_shown["id"] in QUEST_BY_ID:
         spark = TWINKLE[_frame % len(TWINKLE)]
         if _badge_shown.get("rank"):
-            return f"{GOLD}{spark:>3}{FG}   new rank: {_rank(n)[0]}!"
+            return f"{GOLD}{spark:>3}{FG}   " + _fit(f"new rank: {_rank(n)[0]}!", room)
         if _badge_shown.get("mastered"):
-            return f"{GOLD}{spark:>3}{FG}   mastered: {QUEST_BY_ID[_badge_shown['id']][1]}!"
-        return f"{GOLD}{spark:>3}{FG}   badge: {QUEST_BY_ID[_badge_shown['id']][1]}!"
+            return f"{GOLD}{spark:>3}{FG}   " + _fit(f"mastered: {QUEST_BY_ID[_badge_shown['id']][1]}!", room)
+        return f"{GOLD}{spark:>3}{FG}   " + _fit(f"badge: {QUEST_BY_ID[_badge_shown['id']][1]}!", room)
     if _coach["until"] > now:
-        return f"{GOLD}{'→':>3}{FG}   {_coach['text']}"
+        return f"{GOLD}{'→':>3}{FG}   " + _fit(_coach["text"], room)
     q = _next_quest()
-    return f"{GOLD}{'★' + str(n):>3}{FG}   " + (q[2] if q else f"all done: {RANKS[-1][1]}!")
+    return f"{GOLD}{'★' + str(n):>3}{FG}   " + _fit(q[2] if q else f"all done: {RANKS[-1][1]}!", room)
 
 
 def _quest_hit(qid: str) -> None:

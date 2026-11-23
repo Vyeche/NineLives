@@ -139,6 +139,42 @@ print(" ".join(str(i + 1) for i, t in enumerate(json.load(sys.stdin)[0]["tabs"])
     if [ "$b1" = 1 ] && [ -z "$b2" ] && [ "$b3" = 2 ] && [ -z "$b4" ]; then
       ok "the search key toggles its box, and a box left in another tab doesn't swallow it"
     else fail "search toggle: tabs with a box: '$b1' → '$b2'; from tab 2: '$b3' → '$b4'"; fi
+    # A narrow window and a big font make kitty's sidebar narrower (a third of the window at
+    # most): the search row must stay whole, sidebar.txt's button columns must be where kitty drew
+    # ⚠, + and × (read back from the sidebar's cells), and clicking them must work
+    sidebar_buttons() {  # LABEL: compare and click; prints nothing, ok/fail lines only
+      local lay left top cw ch _cols b g x y col drawn bad="" t0 t1 t2 act
+      lay="$(cat "$NL_TEST_DIR/state/sidebar.txt" 2>/dev/null)"
+      read -r _ left top cw ch _cols <<< "$(grep '^cells: ' <<< "$lay")"
+      for b in waiting:⚠ new:+ close:×; do
+        g="${b#*:}"; b="${b%%:*}"
+        read -r x y <<< "$(grep "^button $b: " <<< "$lay" | cut -d' ' -f3-)"
+        drawn="$(grep "^drawn $g: " <<< "$lay" | cut -d' ' -f3)"
+        col=$(( (${x:-0} - ${left:-0}) / ${cw:-1} ))
+        [ -n "$x" ] && [ -n "$drawn" ] && [ "$col" = "$drawn" ] || bad="$bad $b(col ${col:-?}, $g drawn at ${drawn:-nowhere})"
+      done
+      if [ -n "$bad" ]; then fail "$1: sidebar.txt buttons don't match what kitty drew:$bad ($(tr '\n' ' ' <<< "$lay"))"; return; fi
+      ok "$1: the search row is whole ($((_cols - 1)) cells) and sidebar.txt's ⚠, + and × are where kitty drew them"
+      read -r x y <<< "$(grep '^button waiting: ' <<< "$lay" | cut -d' ' -f3-)"
+      python3 scripts/xclick.py "${NL_TEST_DISPLAY:-:97}" "$x" "$y" >/dev/null 2>&1; sleep 1.2
+      act="$(bash scripts/test-kitty.sh k ls 2>/dev/null | python3 -c 'import json,sys; print([i+1 for i,t in enumerate(json.load(sys.stdin)[0]["tabs"]) if t["is_active"]])')"
+      bash scripts/test-kitty.sh k focus-tab --match index:0 >/dev/null 2>&1; sleep 0.8
+      t0="$(ntabs)"; read -r x y <<< "$(btn new)"
+      python3 scripts/xclick.py "${NL_TEST_DISPLAY:-:97}" "$x" "$y" >/dev/null 2>&1; sleep 1
+      t1="$(ntabs)"; read -r x y <<< "$(btn close)"
+      python3 scripts/xclick.py "${NL_TEST_DISPLAY:-:97}" "$x" "$y" >/dev/null 2>&1; sleep 1
+      t2="$(ntabs)"
+      if [ "$act" = "[7]" ] && [ "$t1" = "$((t0 + 1))" ] && [ "$t2" = "$t0" ]; then
+        ok "$1: clicking ⚠ goes to the waiting tab, + opens a tab, × closes it"
+      else fail "$1: ⚠ went to tab $act (want [7]); tabs $t0 → + → $t1 → × → $t2"; fi
+      bash scripts/test-kitty.sh k focus-tab --match index:0 >/dev/null 2>&1; sleep 0.5
+    }
+    bash scripts/test-kitty.sh k resize-os-window --width 860 --height 760 --unit pixels >/dev/null 2>&1; sleep 1.5
+    sidebar_buttons "860 px window"
+    bash scripts/test-kitty.sh k resize-os-window --width 1100 --height 760 --unit pixels >/dev/null 2>&1
+    bash scripts/test-kitty.sh k set-font-size 20 >/dev/null 2>&1; sleep 1.5
+    sidebar_buttons "font size 20"
+    bash scripts/test-kitty.sh k set-font-size 0 >/dev/null 2>&1; sleep 1
     # Last (it replaces the test kitty): kitty-relaunch.sh brings split tabs back. Tab 1 split
     # left | right with the right half split top / bottom (a Claude pane at the bottom, sizes not
     # even), the renamed tab 10 split top / bottom with the bottom split left | right, tab 11 split
@@ -182,6 +218,18 @@ print(json.dumps(out))'
       if [ -n "$before" ] && [ "$before" = "$after" ] && [ "$splits" = 3 ] && [ "$unzoomed" = "splits 2" ] && [ "$resumed" = 2 ]; then
         ok "kitty-relaunch.sh brings back $splits split tabs (layout, sizes, folders, Claude pane, active pane, zoom)"
       else fail "relaunch with splits: unzoomed '$unzoomed', Claude resumed $resumed of 2; before $before; after $after"; fi
+      # plain shells come back as `bash -lc 'exec bash'`, which sets no title: kitty calls them
+      # "bash", and the sidebar (and the search box, same rule) must still name them by folder
+      names="$(k ls | python3 -c 'import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("tf", "config/tab-finder.py"); tf = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tf)
+data = json.load(sys.stdin); rows = tf.rows(data)
+plain = [(r["name"], os.path.basename(next(w for w in t["windows"] if w["is_active"])["cwd"]))
+         for r, t in zip(rows, data[0]["tabs"])
+         if not t.get("title_overridden") and all(w["title"] == "bash" for w in t["windows"])]
+print(len(plain), "ok" if plain and all(n == f for n, f in plain) else plain)')"
+      if [ "${names#* }" = ok ]; then ok "restarted plain shells (titled \"bash\") are named by their folder (${names% *} tabs)"
+      else fail "restarted plain shells' names: $names"; fi
       # the restart's own marker must not reach the new kitty (it did once: the next restart from a
       # tab then ran in the foreground and died with the old kitty)
       kpid="$(pgrep -f -- "[-]-listen-on unix:@ninelives-test-kitty" | head -1)"

@@ -36,6 +36,14 @@ class Rows(unittest.TestCase):
         self.assertEqual([x["state"] for x in r], ["blocked", "error", "working", "working", "done", ""])
         self.assertEqual([x["name"] for x in r], ["Ask", "Oops", "omp: x", "make", "Done", "proj"])
 
+    def test_a_bare_shell_title_is_the_folder_unless_you_named_it_that(self):
+        # a plain tab kitty-relaunch reopened: no title set, kitty calls the window "bash"
+        renamed = tab(win("bash", cwd="/w/mine"))
+        renamed["title_overridden"] = True
+        r = tf.rows(ls(tab(win("bash", cwd="/w/proj")), tab(win("-zsh", cwd="/w/api")), renamed,
+                       tab(win("bash-tools", cwd="/w/x"))))
+        self.assertEqual([x["name"] for x in r], ["proj", "api", "bash", "bash-tools"])
+
     def test_finds_an_already_open_search_box(self):
         box = win("x", me=False)
         box["id"], box["cmdline"] = 77, ["sh", "-c", 'exec python3 "/c/kitty/tab-finder.py" search']
