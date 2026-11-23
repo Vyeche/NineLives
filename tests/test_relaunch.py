@@ -159,10 +159,13 @@ class MacLike(NormalRestart):
         write_exe(f"{self.d}/sys/uname", "#!/bin/sh\necho Darwin\n")
         # macOS's /usr/bin/python3 is an xcrun shim that adds SDKROOT, CPATH, LIBRARY_PATH and
         # MANPATH to the environment of the python it starts (seen on the Gauntlet's macOS runner):
-        # none of them may reach the new kitty through the python3 that detaches it
-        os.remove(f"{self.d}/sys/python3")
-        write_exe(f"{self.d}/sys/python3", "#!/bin/sh\nSDKROOT=/sdk CPATH=/sdk/include LIBRARY_PATH=/sdk/lib "
-                  f'MANPATH=/sdk/man; export SDKROOT CPATH LIBRARY_PATH MANPATH\nexec "{tools["python3"]}" "$@"\n')
+        # none of them may reach the new kitty through the python3 that detaches it. On a Mac the
+        # real one is that shim (and a made-up SDKROOT would break it), so the fake only stands in
+        # for it elsewhere.
+        if sys.platform != "darwin":
+            os.remove(f"{self.d}/sys/python3")
+            write_exe(f"{self.d}/sys/python3", "#!/bin/sh\nSDKROOT=/sdk CPATH=/sdk/include LIBRARY_PATH=/sdk/lib "
+                      f'MANPATH=/sdk/man; export SDKROOT CPATH LIBRARY_PATH MANPATH\nexec "{tools["python3"]}" "$@"\n')
         # BSD date has no %N: it prints a plain N (which once made the detached copy detach again)
         os.remove(f"{self.d}/sys/date")
         write_exe(f"{self.d}/sys/date", f'#!/bin/sh\nf=$(printf %s "$1" | sed s/%N/N/)\nshift\nexec "{tools["date"]}" "$f" "$@"\n')
