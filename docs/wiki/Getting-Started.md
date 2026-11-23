@@ -66,7 +66,7 @@ Using a shortcut for the first time earns its badge: that was **First Responder*
 bash scripts/kitty-relaunch.sh --when-idle   # wait until no tab is busy, then restart and reopen every tab
 ```
 Every tab comes back in its folder, with its splits, names and the pane you were in; Claude resumes
-its session.
+its session, and shells come back with kitty's shell integration (prompt jumps, Ctrl+Shift+G).
 
 ![Two split tabs before a restart, the kitty window closing, and the same tabs, names and splits back a moment later](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/restart.gif)
 

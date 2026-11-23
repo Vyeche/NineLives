@@ -3,6 +3,9 @@
 Changes you'd notice, newest first. To get them: `bash scripts/install.sh`, then restart kitty with
 `bash scripts/kitty-relaunch.sh --when-idle` (see [Installing](Installing)).
 
+## 2026-11-23
+- **Restored tabs work like new ones:** after `kitty-relaunch.sh`, plain shells are kitty's own shell with kitty's shell integration, so Ctrl+Shift+Z/X (jump between prompts), Ctrl+Shift+G (last command's output) and opening new tabs in the shell's folder work right away. When a resumed Claude or omp exits, the shell that takes its place has it too. Resumed Claude and omp tabs keep their `✳`/`π` mark in the sidebar. `--dry-run` and the log now list exactly what reopens (a pane whose folder is gone shows as home, with its note), and a folder with a `$` in its name comes back as that folder (through the `kitten` that ships with your kitty, even when `kitten` isn't on your PATH). Two new Claude tabs in one folder reached through a symlink and its real path count as one folder, so neither resumes the other's session.
+
 ## 2026-11-22
 - **Social preview:** sharing the repository link now shows a NineLives card with a real sidebar (`tools/social_preview.py` makes it from a recorded still).
 - **A YouTube Short:** [watch it](https://youtube.com/shorts/hra1NPQsbwk). `tools/short/` records a vertical Short of NineLives from the hidden test kitty (the real shortcuts, NineLives' own sounds where they played over an original music bed made with the same synth, a close-up of the sidebar and the cat) and can render it again after a UI change. `scripts/xkey.py` presses keys on the test display, and `scripts/record.sh` can be sourced for its scene helpers.

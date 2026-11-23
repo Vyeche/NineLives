@@ -137,6 +137,12 @@ class Search(unittest.TestCase):
                                                    "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js")])), "✳")
         self.assertEqual(tf.agent_mark(win(procs=[("omp",)])), "π")
         self.assertEqual(tf.agent_mark(win(procs=[("bash",)])), "")
+        # a tab kitty-relaunch reopened: kitty lists every process in the foreground group (kitten
+        # run-shell, bash -lc, the agent), so the agent is found without looking below the leader
+        self.assertEqual(tf.agent_mark(win(procs=[("/opt/kitty/bin/kitten", "run-shell", "--shell=/bin/bash", "bash",
+                                                   "-lc", "claude --resume x"),
+                                                  ("bash", "-lc", "claude --resume x; echo"),
+                                                  ("claude", "--resume", "x")])), "✳")
 
     def test_narrow_pane_never_wraps(self):
         T = [dict(t, state="", active=False, agent="✳", branch="a-very-long-feature-branch-name")

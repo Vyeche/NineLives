@@ -11,7 +11,7 @@ It checks:
 - **Install:** into a temp folder, with kitty's config check, and every file arrives.
 - **Sounds:** all six are present and on their loudness targets.
 - **Links:** every wiki and README link resolves.
-- **A hidden test kitty:** no errors in its log, "needs you" plays, `kitty-relaunch.sh --status` sees working and waiting tabs, a shortcut earns its badge, the sidebar's buttons and the short-window list work. In an 860 px window and at font size 20 (both make kitty's sidebar narrower) it checks the search row stays whole, that the button columns in `sidebar.txt` are where kitty drew `⚠`, `+` and `×`, and clicks them. Last, it splits three tabs (nested splits with a Claude pane, a renamed tab, a zoomed tab), restarts the test kitty with `kitty-relaunch.sh` and checks every tab comes back with the same panes, folders, layout, split sizes, active pane and name, and that the restored plain shells (titled `bash`) are named by their folder.
+- **A hidden test kitty:** no errors in its log, "needs you" plays, `kitty-relaunch.sh --status` sees working and waiting tabs, a shortcut earns its badge, the sidebar's buttons and the short-window list work. In an 860 px window and at font size 20 (both make kitty's sidebar narrower) it checks the search row stays whole, that the button columns in `sidebar.txt` are where kitty drew `⚠`, `+` and `×`, and clicks them. Last, it splits three tabs (nested splits with a Claude pane, a renamed tab, a zoomed tab), restarts the test kitty with `kitty-relaunch.sh` and checks every tab comes back with the same panes, folders, layout, split sizes, active pane and name (one Claude tab sits in a folder named `$HOME x`); that `--dry-run`, the log and the session file list the same panes; that resumed omp and Claude tabs keep their sidebar marks (`agents:` in `sidebar.txt`); that restored shells, and the shell a resumed agent leaves when it exits, have kitty's shell integration (the last command's output reads back); and that restored plain shells are named by their folder.
 
 It also saves a sidebar screenshot to `/tmp/ninelives-check.png`. Run it before every commit.
 
@@ -28,8 +28,11 @@ python3 -m unittest discover -s tests -v
   - real state changes through the timer: done, needs you, the reminder, closed tabs
   - quests and rank-ups
   - loading cleanly when kitty internals are missing (as after a kitty update)
+  - the agent mark for an agent below a shell or kitten in the same process group (a restored tab), with a fake `/proc`
 - **`tests/test_kitty_tabs.py`** feeds fake `kitty @ ls` output to `scripts/kitty-tabs.py`. It checks:
   - what `kitty-relaunch.sh` reopens: Claude with and without a session id, Claude started through node, omp, renamed tabs, the active tab
+  - how: shells with no command (kitty's own, with shell integration), agents under `--hold`, folders with a `$` through `kitten run-shell`, an agent in its own process's folder
+  - that `--dry-run` (show) and the session file say the same, pane by pane, and kitty's pid found above a wrapped window
   - split tabs: the session file's layout state, every pane's folder and command, the active pane, overlays, zoomed tabs, and the one-pane fallback when kitty gives no layout state
   - which tabs `--when-idle` waits for
   - which kitty a restart picks: the one it runs in, then any other with a socket, never the test or dev kitty

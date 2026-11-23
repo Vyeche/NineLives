@@ -5,7 +5,7 @@ Every tab is two lines, with names and folders lined up in one column:
  12 ◐ Fix the login bug          number, status, name (long names end in …)
       alpha/proj-one      3m     last two folders, and how long it has been in this state
 ```
-- **Name:** the tab's title (Claude's task, omp's title), or the folder name for a plain shell (also one whose title is just `bash`, as after a restart, unless you named the tab that). Claude's `✳` prefix is dropped: the status slot already says that. Rename with **Ctrl+Shift+R**.
+- **Name:** the tab's title (Claude's task, omp's title), or the folder name for a plain shell (also one whose title is just `bash`, as for a shell without kitty's shell integration, unless you named the tab that). Claude's `✳` prefix is dropped: the status slot already says that. Rename with **Ctrl+Shift+R**.
 - **Agent:** under the status icon, a small grey mark says which agent runs in the tab: `✳` Claude, `π` omp, two letters for others (`oc` opencode, `cx` codex, `gm` gemini, `ai` aider). A plain shell has none.
 - **Folder:** the last two folders, with `~` for home; cut at the start with `…` if long. In a git repo on a branch other than `main`/`master`, the branch follows in magenta: `code/api ⌥ fix-parser`.
 - **Time** (`3m`, `1h05`): how long the tab has been working, waiting or finished. It appears after one minute, and counts from when the sidebar first saw that state, so it starts again after a kitty restart.
@@ -66,7 +66,8 @@ for you, tabs with an error, then the tabs nearest yours. The last line names th
 `⋯ hidden: 1–2, 10`; click that line to go to the first hidden tab. Tabs keep their real numbers, so
 **Alt+N** still goes to tab N.
 Which tabs are shown is written to `~/.local/state/ninelives/sidebar.txt` whenever it changes, with
-where the buttons are and the columns kitty really drew `⚠`, `+` and `×` in (`check.sh` compares them).
+their agent marks (`agents: 3:π 12:✳`), where the buttons are and the columns kitty really drew `⚠`,
+`+` and `×` in (`check.sh` compares them).
 
 ## Celebrations
 When you earn a badge, a gold wave runs down the tab numbers, and the line under **+ New tab** sparkles

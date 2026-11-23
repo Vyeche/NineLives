@@ -2,10 +2,11 @@
 """kitty-tabs.py — read `kitty @ ls` (JSON on stdin) for kitty-relaunch.sh.
 
     kitty @ ls | python3 scripts/kitty-tabs.py session [SAVED]  a kitty session file that reopens it all
-    kitty @ ls | python3 scripts/kitty-tabs.py show [SAVED]     what would reopen, for people (--dry-run)
+    kitty @ ls | python3 scripts/kitty-tabs.py show [SAVED]     what that file reopens, for people (--dry-run, log)
     kitty @ ls | python3 scripts/kitty-tabs.py refocus    window ids to focus after starting from it
     kitty @ ls | python3 scripts/kitty-tabs.py snapshot   one line per tab: folder US command US name US active
     kitty @ ls | python3 scripts/kitty-tabs.py busy       one line per busy tab: number, why, title
+    kitty @ ls | python3 scripts/kitty-tabs.py kitty-pid  the pid of the kitty these windows run in
     python3 scripts/kitty-tabs.py sockets                 which kitty to restart: candidate sockets
 (US is \x1f: tabs would collapse an empty name field when the shell splits the line.)
 SAVED: a session file kitty wrote itself (`kitty @ action save_as_session --save-only FILE`); its
@@ -17,14 +18,21 @@ How each window comes back (every pane of a split tab, each in its own folder):
     other Claude pane shares the folder (--continue could pick that one's session); otherwise a shell
     with a hint to `claude --resume`.
   - omp continues its last session; anything else becomes a shell in the same folder.
+  - A shell is kitty's own (launch with no command), so kitty's shell integration works in it
+    (prompt jumps, the last command's output, the folder it reports). An agent runs under
+    `launch --hold`: when it exits, kitty starts that same shell in its place.
+plan() decides all of it, folder fallbacks included; session, show and snapshot only write it out,
+  so --dry-run and the log say exactly what the session file opens.
 session: splits come back in the same layout and sizes (kitty's layout_state, as save_as_session
   writes it), with the pane you were in focused; a tab without a layout state comes back as one
   window (its active one). Tab names you set (Ctrl+Shift+R; kitty's title_overridden) come back, and
   so does the tab you were on. A folder that no longer exists becomes your home folder (a Claude
   pane without a session id then gets a hint, not `claude --continue`, which would pick home's).
-snapshot: the same for each tab's active pane; name is the tab's own name if you renamed it, else
-  empty; active is 1 for the tab you were on.
+snapshot: the same for each tab's active pane (command empty for a shell); name is the tab's own
+  name if you renamed it, else empty; active is 1 for the tab you were on.
 busy: tabs a restart would interrupt (see kitty-relaunch.sh --status).
+kitty-pid: a window's pid can be a process kitty started under a wrapper (launch --hold runs the
+  command under kitten), so its parents are followed up to kitty itself.
 sockets (no stdin): "here ADDRESS" for the kitty this runs in ($KITTY_LISTEN_ON), then "found ADDRESS"
   for every other kitty of yours with a remote-control socket (one started with --listen-on, or one
   with NineLives' listen_on from kitty.conf). The test and dev kittys' sockets are never offered:
@@ -44,7 +52,7 @@ RUNTIMES = {"node", "bun"}          # an agent when running one (node …/claude
 IDLE_OK = {"vim", "nvim", "vi", "nano", "micro", "hx", "emacs", "less", "more", "man", "most",
            "htop", "top", "btop", "watch", "tmux", "screen", "ssh", "kitten", "cat", "tail"}
 SPINNER_RE = re.compile(r"[◐◑◒◓⠁-⣿]")
-SHELL_AFTER = "; exec bash"
+CLAUDE_EXITED = '; echo; echo "[Claude exited. This is a normal shell now.]"'
 US = "\x1f"
 FOCUS_VAR = "ninelives_focus"       # marks the pane to focus in a split tab (see refocus)
 # kitty reads a session file with str.splitlines(), which also breaks lines at these: one inside a
@@ -92,21 +100,43 @@ def _active_window(tab):
     return next((w for w in tab["windows"] if w.get("is_active")), tab["windows"][0])
 
 
+def _run_shell_cwd(w):
+    """The folder of a `kitten run-shell --cwd=FOLDER …` in the window's foreground, or None.
+    kitty reports the folder of a window's first process: for a pane session() reopened in a
+    folder with a $ in it, that is kitten's (home) until the agent exits; FOLDER is the pane's."""
+    for p in w.get("foreground_processes") or []:
+        c = p.get("cmdline") or []
+        if len(c) > 2 and _name(c[0]) == "kitten" and c[1] == "run-shell":
+            for i, a in enumerate(c[2:], 2):
+                if not a.startswith("-"):
+                    break                               # the command: its options aren't kitten's
+                if a.startswith("--cwd="):
+                    return a[len("--cwd="):] or None
+                if a == "--cwd" and i + 1 < len(c):
+                    return c[i + 1]
+    return None
+
+
 def _reopen(w):
-    """How to bring one window back: (command, kind)."""
+    """How to bring one window back: (command for bash -lc, kind, folder); "" for a plain shell."""
+    cwd = _run_shell_cwd(w) or w["cwd"]
     for p in w.get("foreground_processes") or []:
         c = p.get("cmdline") or []
         args = _claude_args(c)
         if args is not None:
             sid = _session_id(args)
             if sid:
-                return (f"claude --resume {shlex.quote(sid)}; echo; "
-                        f"echo \"[Claude exited. This is a normal shell now.]\"{SHELL_AFTER}"), "claude-id"
-            return "", "claude-new"                   # decided once every pane is known (plan)
+                return f"claude --resume {shlex.quote(sid)}{CLAUDE_EXITED}", "claude-id", cwd
+            return "", "claude-new", cwd              # decided once every pane is known (plan)
         if c and _name(c[0]) == "omp":
             rest = [a for a in c[1:] if a not in ("-c", "--continue")]
-            return "omp " + " ".join(shlex.quote(a) for a in rest + ["--continue"]) + SHELL_AFTER, "omp"
-    return "exec bash", "shell"
+            return "omp " + " ".join(shlex.quote(a) for a in rest + ["--continue"]), "omp", cwd
+    return "", "shell", cwd
+
+
+def _hint(text):
+    """A pane that comes back as a shell, with a line saying why."""
+    return f'echo "[{text}]"', "hint"
 
 
 def _leaves(pairs):
@@ -166,10 +196,14 @@ def _window_ids(state):
         return None
 
 
-def plan(tabs, saved_states=None):
+def plan(tabs, saved_states=None, isdir=os.path.isdir, home=None, realpath=os.path.realpath):
     """What to reopen: one dict per tab with its name, whether it was the active tab, its layout
-    and layout state, and its panes (cwd, cmd, kind, id, focus). saved_states: layout states from
-    kitty's own save_as_session file, keyed by their window ids (see saved_layout_states)."""
+    and layout state, and its panes. saved_states: layout states from kitty's own save_as_session
+    file, keyed by their window ids (see saved_layout_states).
+    Each pane: cwd (the folder it opens in), was (the folder it had), cmd (run by bash -lc under
+    launch --hold; "" for a plain shell), what (cmd for people), kind, id, focus. Every decision is
+    made here, so session, show and snapshot can't disagree."""
+    home = home or os.path.expanduser("~")
     out = []
     for tab in tabs:
         saved = (saved_states or {}).get(_window_ids(tab.get("layout_state")) or
@@ -179,33 +213,49 @@ def plan(tabs, saved_states=None):
             state, panes = _panes(tab)
         rows = []
         for w, focus in panes:
-            cmd, kind = _reopen(w)
-            rows.append({"cwd": w["cwd"], "cmd": cmd, "kind": kind, "id": w.get("id"), "focus": focus})
+            cmd, kind, cwd = _reopen(w)
+            rows.append({"cwd": cwd, "was": cwd, "cmd": cmd, "kind": kind, "id": w.get("id"), "focus": focus})
         out.append({"name": _tab_name(tab, _active_window(tab)).replace(US, " ").replace("\n", " "),
                     "active": bool(tab.get("is_active")), "layout": tab.get("layout"),
                     "enabled_layouts": tab.get("enabled_layouts"), "state": state, "panes": rows})
+    panes = [r for t in out for r in t["panes"]]
     # Claude without a session id: --continue picks the newest session in the folder, which could
     # be another Claude pane's (with or without an id, in any tab), so only when it's the folder's
-    # only Claude pane.
+    # only Claude pane. Folders are compared by their real path (a symlink and its target are one
+    # folder to claude); each pane still opens in the path it had.
     claude_per_cwd = {}
-    for r in (r for t in out for r in t["panes"]):
+    fresh = [r for r in panes if r["kind"] == "claude-new"]
+    for r in panes:
         if r["kind"].startswith("claude"):
-            claude_per_cwd[r["cwd"]] = claude_per_cwd.get(r["cwd"], 0) + 1
-    for r in (r for t in out for r in t["panes"]):
-        if r["kind"] == "claude-new":
-            if claude_per_cwd[r["cwd"]] == 1:
-                r["cmd"] = ("claude --continue; echo; "
-                            f"echo \"[Claude exited. This is a normal shell now.]\"{SHELL_AFTER}")
-            else:
-                r["cmd"] = ("echo \"[Several Claude tabs were open in this folder: "
-                            f"claude --resume to pick yours.]\"{SHELL_AFTER}")
+            key = realpath(r["cwd"])
+            claude_per_cwd[key] = claude_per_cwd.get(key, 0) + 1
+    for r in fresh:
+        if claude_per_cwd[realpath(r["cwd"])] == 1:
+            r["cmd"] = "claude --continue" + CLAUDE_EXITED
+        else:
+            r["cmd"], r["kind"] = _hint("Several Claude tabs were open in this folder: "
+                                        "claude --resume to pick yours.")
+    for r in panes:
+        if not (r["cwd"] and isdir(r["cwd"]) and not _has_break(r["cwd"])):
+            r["cwd"] = home         # gone, or a name a session file can't hold (a line break)
+            if any(r is f for f in fresh):     # --continue in home would pick an unrelated session
+                r["cmd"], r["kind"] = _hint("Claude was open in a folder that no longer exists: "
+                                            "claude --resume to find its session.")
+        if _has_break(r["cmd"]):    # e.g. an omp argument with a newline in it
+            r["cmd"], r["kind"] = _hint("This pane's command could not be brought back.")
+        if r["kind"] == "shell":
+            r["what"] = "shell"
+        elif r["kind"] == "hint":
+            r["what"] = "shell, with a note: " + r["cmd"][len('echo "['):-len(']"')]
+        else:
+            r["what"] = r["cmd"].split(";")[0]
     return out
 
 
-def snapshot(tabs):
+def snapshot(tabs, isdir=os.path.isdir, home=None):
     """One row per tab, for its active pane: folder US command US name US active."""
     out = []
-    for t in plan(tabs):
+    for t in plan(tabs, isdir=isdir, home=home):
         r = next(p for p in t["panes"] if p["focus"])
         out.append(US.join((r["cwd"], r["cmd"], t["name"], "1" if t["active"] else "0")))
     return out
@@ -228,14 +278,39 @@ def saved_layout_states(text):
     return states
 
 
-def session(tabs, saved_states=None, isdir=os.path.isdir, home=None):
+def _kitten():
+    """The kitten next to the kitty that opens the session (kitty-relaunch.sh says which in
+    $NL_KITTEN), so a folder with a $ in it reopens even where kitten isn't on PATH."""
+    k = os.environ.get("NL_KITTEN", "")
+    return k if k and os.path.isabs(k) else "kitten"
+
+
+def _launch_args(r, home, kitten="kitten"):
+    """The launch options and command that open pane r (see plan) where plan says.
+    A shell: kitty's own (no command), which gets kitty's shell integration; bash -c would not
+    (kitty skips it for a shell given a command). A command: --hold, so kitty starts that shell
+    when it exits (kitty runs it under `kitten run-shell`).
+    kitty expands $VARS in launch options, and once more in --cwd with no way to escape them, so a
+    folder with a $ in it can't be a --cwd: `kitten run-shell --cwd` starts the shell there (with
+    shell integration) and the command cd's there first."""
+    cwd, cmd = r["cwd"], r["cmd"]
+    if "$" not in cwd:
+        return ["--cwd=" + shlex.quote(cwd)], (["--hold", "bash", "-lc", shlex.quote(cmd)] if cmd else [])
+    opts = ["--cwd=" + shlex.quote(home)] if "$" not in home else []
+    run = [shlex.quote(kitten), "run-shell", shlex.quote("--cwd=" + cwd)]
+    if cmd:
+        run += ["bash", "-lc", shlex.quote(f"cd -- {shlex.quote(cwd)} 2>/dev/null; {cmd}")]
+    return opts, run
+
+
+def session(tabs, saved_states=None, isdir=os.path.isdir, home=None, kitten=None):
     """A kitty session file that reopens every tab, with its splits, names, active pane and active
     tab. It follows what kitty's own save_as_session writes: `set_layout_state` arranges the windows
     whose `kitty-unserialize-data` ids it names, so the pairs tree and split sizes come back as they
     were. A tab without a usable layout state comes back as one window (its active one)."""
-    home = home or os.path.expanduser("~")
+    home, kitten = home or os.path.expanduser("~"), kitten or _kitten()
     lines, active = [], None
-    for i, t in enumerate(plan(tabs, saved_states)):
+    for i, t in enumerate(plan(tabs, saved_states, isdir, home)):
         # kitty expands $VARS in a tab name ($$ is a literal $)
         name = "".join(" " if c in LINE_BREAKS else c for c in t["name"]).replace("$", "$$")
         lines.append(("new_tab " + name).rstrip())
@@ -246,27 +321,14 @@ def session(tabs, saved_states=None, isdir=os.path.isdir, home=None):
         if t["state"] is not None:
             lines.append("set_layout_state " + json.dumps(t["state"]))
         for r in t["panes"]:
-            cmd = r["cmd"]
-            if r["cwd"] and isdir(r["cwd"]) and not _has_break(r["cwd"]):
-                cwd = r["cwd"]
-            else:
-                cwd = home
-                if r["kind"] == "claude-new":   # --continue in home would pick an unrelated session
-                    cmd = ("echo \"[Claude was open in a folder that no longer exists: "
-                           f"claude --resume to find its session.]\"{SHELL_AFTER}")
-            if _has_break(cmd):                 # e.g. an omp argument with a newline in it
-                cmd = f"echo \"[This pane's command could not be brought back.]\"{SHELL_AFTER}"
             parts = ["launch"]
             if t["state"] is not None:
                 parts.append(shlex.quote("kitty-unserialize-data=" + json.dumps({"id": r["id"]})))
-            if "$" in cwd:          # kitty expands $VARS in launch options: cd in the command instead
-                cmd = f"cd -- {shlex.quote(cwd)} 2>/dev/null; {cmd}"
-            else:
-                parts.append("--cwd=" + shlex.quote(cwd))
+            opts, run = _launch_args(r, home, kitten)
+            parts += opts
             if r["focus"] and len(t["panes"]) > 1:
                 parts.append(f"--var={FOCUS_VAR}=1")       # for refocus, after kitty has started
-            parts += ["bash", "-lc", shlex.quote(cmd)]
-            lines.append(" ".join(parts))
+            lines.append(" ".join(parts + run))
             if r["focus"]:
                 lines.append("focus")
         lines.append("")
@@ -301,12 +363,12 @@ def refocus(tabs):
     return [str(i) for i in out]
 
 
-def show(tabs, saved_states=None):
+def show(tabs, saved_states=None, isdir=os.path.isdir, home=None):
+    """What the session file opens, for people: per pane its folder and what runs there."""
     lines = []
-    for i, t in enumerate(plan(tabs, saved_states), 1):
+    for i, t in enumerate(plan(tabs, saved_states, isdir, home), 1):
         many = len(t["panes"]) > 1
         for n, r in enumerate(t["panes"]):
-            what = r["cmd"].split(";")[0] if not r["cmd"].startswith("exec bash") else "shell"
             extra = ""
             if n == 0:
                 extra += (f'  name "{t["name"]}"' if t["name"] else "") + ("  (active)" if t["active"] else "")
@@ -314,8 +376,12 @@ def show(tabs, saved_states=None):
                     extra += f"  [{t['layout'] or 'split'}: {len(t['panes'])} panes]"
             if many and r["focus"]:
                 extra += "  (active pane)"
-            lines.append((f"{i:>3}  " if n == 0 else "     + ") + r["cwd"])
-            lines.append(f"       {what}{extra}")
+            where = r["cwd"]
+            if r["cwd"] != r["was"]:
+                was = " ".join("".join(" " if c in LINE_BREAKS else c for c in (r["was"] or "")).split())
+                where += f"  (instead of {was or 'no folder'}: not there)"
+            lines.append((f"{i:>3}  " if n == 0 else "     + ") + where)
+            lines.append(f"       {r['what']}{extra}")
     return lines
 
 
@@ -333,6 +399,38 @@ def _command(w):
         if name and name not in SHELLS | AGENTS | IDLE_OK:
             return name
     return ""
+
+
+def _proc_stat(pid):
+    """(comm, ppid) of a process, from /proc/<pid>/stat."""
+    with open(f"/proc/{pid}/stat", "rb") as f:
+        raw = f.read().decode("utf-8", "replace")
+    comm = raw[raw.index("(") + 1:raw.rindex(")")]
+    return comm, int(raw[raw.rindex(")") + 1:].split()[1])
+
+
+def kitty_pid(tabs, stat=_proc_stat):
+    """The pid of the kitty these windows run in: from a window's pid up through its parents to the
+    first process named kitty (a window's pid can be its command under a wrapper kitty put in
+    between, such as kitten run-shell for launch --hold). None if there is none. The walk starts at
+    the window's parent: a window can itself run a process called kitty (kitty +runpy, kitty @ …)."""
+    for tab in tabs:
+        for w in tab["windows"]:
+            try:
+                pid = stat(w["pid"])[1] if isinstance(w.get("pid"), int) else None
+            except (OSError, ValueError, IndexError):
+                continue
+            for _ in range(8):
+                if not isinstance(pid, int) or pid <= 1:
+                    break
+                try:
+                    comm, ppid = stat(pid)
+                except (OSError, ValueError, IndexError):
+                    break
+                if comm == "kitty":
+                    return pid
+                pid = ppid
+    return None
 
 
 def busy(tabs):
@@ -429,7 +527,8 @@ def all_tabs(data):
 
 
 def main():
-    modes = {"snapshot": snapshot, "show": show, "busy": busy, "session": session, "refocus": refocus}
+    modes = {"snapshot": snapshot, "show": show, "busy": busy, "session": session, "refocus": refocus,
+             "kitty-pid": lambda tabs: [str(p) for p in [kitty_pid(tabs)] if p]}
     args = sys.argv[1:]
     if args == ["sockets"]:
         env = dict(os.environ)

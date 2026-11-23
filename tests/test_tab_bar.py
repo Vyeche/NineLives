@@ -473,8 +473,8 @@ class Text(TabBarCase):
         self.assertEqual(n("π ⠋ task", "/w"), "π task")
 
     def test_a_bare_shell_title_shows_the_folder(self):
-        # a plain tab kitty-relaunch reopened (bash -lc 'exec bash') has no title of its own: kitty
-        # names the window "bash", and before the restart the sidebar showed the folder
+        # a shell without kitty's shell integration sets no title of its own: kitty names the window
+        # "bash" (as kitty-relaunch's restored shells once were), and the sidebar shows the folder
         n = self.tb._tab_name
         for title in ("bash", "zsh", "-bash", "fish"):
             self.assertEqual(n(title, "/w/proj"), "proj", title)
@@ -787,6 +787,70 @@ class Draw(TabBarCase):
         with mock.patch("os.tcgetpgrp", lambda fd: 42), \
                 mock.patch("builtins.open", mock.mock_open(read_data=argv)):
             self.assertEqual(self.tb._foreground_name(w), "claude")
+
+    def procs(self, table):
+        """Patch tab_bar's /proc readers with a fake table: pid -> (argv, pgrp, children)."""
+        def get(pid, i):
+            if pid not in table:
+                raise OSError("gone")
+            return table[pid][i]
+        return mock.patch.multiple(self.tb, _proc_argv=lambda pid: get(pid, 0),
+                                   _proc_pgrp=lambda pid: get(pid, 1), _proc_children=lambda pid: get(pid, 2))
+
+    def test_an_agent_under_a_shell_in_the_same_group_is_found(self):
+        # a tab kitty-relaunch reopened: launch --hold leads with kitten run-shell, then bash -lc
+        # runs claude, all in kitten's process group (issue #1: the ✳ mark was lost)
+        w = types.SimpleNamespace(child=types.SimpleNamespace(child_fd=5))
+        table = {42: (["/opt/kitty/bin/kitten", "run-shell", "--shell=/bin/bash", "bash", "-lc", "claude --resume x"], 42, [43]),
+                 43: (["/usr/bin/bash", "-lc", "claude --resume x; echo"], 42, [44]),
+                 44: (["node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js", "--resume", "x"], 42, [])}
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.procs(table):
+            self.assertEqual(self.tb._foreground_name(w), "claude")
+        table[42] = (["bash", "-lc", "omp --continue"], 42, [44])
+        table[44] = (["omp", "--continue"], 42, [])
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.procs(table):
+            self.assertEqual(self.tb._foreground_name(w), "omp")
+
+    def test_a_shell_at_its_prompt_stays_the_shell(self):
+        # an interactive shell's background job (its own group) is not the tab's program
+        w = types.SimpleNamespace(child=types.SimpleNamespace(child_fd=5))
+        table = {42: (["-bash"], 42, [50]), 50: (["claude"], 50, [])}
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.procs(table):
+            self.assertEqual(self.tb._foreground_name(w), "-bash")
+        table = {42: (["bash", "-c", "make"], 42, [43]), 43: (["make"], 42, [])}   # not an agent
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.procs(table):
+            self.assertEqual(self.tb._foreground_name(w), "bash")
+
+    def test_only_a_shell_or_kitten_is_looked_below(self):
+        w = types.SimpleNamespace(child=types.SimpleNamespace(child_fd=5))
+        table = {42: (["vim", "x"], 42, [43]), 43: (["claude"], 42, [])}
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.procs(table):
+            self.assertEqual(self.tb._foreground_name(w), "vim")
+
+    def test_looking_below_is_bounded_and_survives_vanishing_processes(self):
+        w = types.SimpleNamespace(child=types.SimpleNamespace(child_fd=5))
+        table = {42: (["bash", "-c", "x"], 42, list(range(100, 160)) + [7])}
+        table.update({i: (["sleep", "1"], 42, []) for i in range(100, 160)})
+        table[7] = (["claude"], 42, [])             # past the limit: not looked at
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.procs(table):
+            self.assertEqual(self.tb._foreground_name(w), "bash")
+        table = {42: (["bash", "-c", "x"], 42, [43, 44]), 44: (["claude"], 42, [])}   # 43 exited meanwhile
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.procs(table):
+            self.assertEqual(self.tb._foreground_name(w), "claude")
+
+    def test_reads_the_real_proc(self):
+        # this test's own process: its group, argv and the children of every thread
+        import signal
+        child = os.posix_spawnp("sleep", ["sleep", "5"], dict(os.environ))   # (subprocess is mocked here)
+        try:
+            me = os.getpid()
+            self.assertEqual(self.tb._proc_pgrp(me), os.getpgrp())
+            self.assertTrue(self.tb._proc_argv(me))
+            if os.path.exists(f"/proc/{me}/task/{me}/children"):
+                self.assertIn(child, self.tb._proc_children(me))
+        finally:
+            os.kill(child, signal.SIGKILL)
+            os.waitpid(child, 0)
 
     def test_branch_shows_unless_main(self):
         self.assertEqual(self.tb._git_branch(self.repo("fix-login")), "fix-login")

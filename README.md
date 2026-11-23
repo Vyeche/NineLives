@@ -22,6 +22,8 @@ Spinning ◐ = working · ✓ = finished · amber block ⚠ = **needs you** · �
 - **Python 3** (for the restart script and the tab search).
 - Optional: `paplay` (PipeWire or PulseAudio) for the sounds. Without it everything else works, silently.
 - Built on Pop!_OS COSMIC (Wayland) and works best there; it also runs on other desktops, X11 or Wayland.
+- **macOS:** partly. kitty runs there and so does most of NineLives, but sounds, notifications, agent
+  marks and the restart use Linux tools for now ([issue tracker](https://github.com/Vyeche/NineLives/issues)).
   Light and dark follow your desktop's light/dark setting where the desktop reports one through the
   desktop portal (COSMIC does); elsewhere you get the dark theme ([how to change it](docs/wiki/Installing.md#light-and-dark)).
 - Only for development: `Xvfb` and `ffmpeg` (the hidden test kitty and the sound checks).
@@ -46,7 +48,7 @@ if [[ $- == *i* && "$TERM" == xterm-kitty && -r ~/.config/kitty/tips.sh ]]; then
 bash scripts/kitty-relaunch.sh --when-idle   # wait until no tab is busy, then restart and reopen every tab
 ```
 Run it from a tab of the kitty you want to restart. Each tab comes back in its folder, splits and
-names included; Claude Code resumes its session.
+names included; Claude Code resumes its session, and shells come back with kitty's shell integration.
 
 ![Two split tabs, frontend + tests and api with Claude, before a restart; the kitty window closes, and a moment later the same tabs come back with the same names, panes and split sizes](docs/images/gifs/restart.gif)
  Use it after updating (`git pull`, then
