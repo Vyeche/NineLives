@@ -196,7 +196,7 @@ def _window_ids(state):
         return None
 
 
-def plan(tabs, saved_states=None, isdir=os.path.isdir, home=None):
+def plan(tabs, saved_states=None, isdir=os.path.isdir, home=None, realpath=os.path.realpath):
     """What to reopen: one dict per tab with its name, whether it was the active tab, its layout
     and layout state, and its panes. saved_states: layout states from kitty's own save_as_session
     file, keyed by their window ids (see saved_layout_states).
@@ -221,14 +221,16 @@ def plan(tabs, saved_states=None, isdir=os.path.isdir, home=None):
     panes = [r for t in out for r in t["panes"]]
     # Claude without a session id: --continue picks the newest session in the folder, which could
     # be another Claude pane's (with or without an id, in any tab), so only when it's the folder's
-    # only Claude pane.
+    # only Claude pane. Folders are compared by their real path (a symlink and its target are one
+    # folder to claude); each pane still opens in the path it had.
     claude_per_cwd = {}
     fresh = [r for r in panes if r["kind"] == "claude-new"]
     for r in panes:
         if r["kind"].startswith("claude"):
-            claude_per_cwd[r["cwd"]] = claude_per_cwd.get(r["cwd"], 0) + 1
+            key = realpath(r["cwd"])
+            claude_per_cwd[key] = claude_per_cwd.get(key, 0) + 1
     for r in fresh:
-        if claude_per_cwd[r["cwd"]] == 1:
+        if claude_per_cwd[realpath(r["cwd"])] == 1:
             r["cmd"] = "claude --continue" + CLAUDE_EXITED
         else:
             r["cmd"], r["kind"] = _hint("Several Claude tabs were open in this folder: "
@@ -276,7 +278,14 @@ def saved_layout_states(text):
     return states
 
 
-def _launch_args(r, home):
+def _kitten():
+    """The kitten next to the kitty that opens the session (kitty-relaunch.sh says which in
+    $NL_KITTEN), so a folder with a $ in it reopens even where kitten isn't on PATH."""
+    k = os.environ.get("NL_KITTEN", "")
+    return k if k and os.path.isabs(k) else "kitten"
+
+
+def _launch_args(r, home, kitten="kitten"):
     """The launch options and command that open pane r (see plan) where plan says.
     A shell: kitty's own (no command), which gets kitty's shell integration; bash -c would not
     (kitty skips it for a shell given a command). A command: --hold, so kitty starts that shell
@@ -288,18 +297,18 @@ def _launch_args(r, home):
     if "$" not in cwd:
         return ["--cwd=" + shlex.quote(cwd)], (["--hold", "bash", "-lc", shlex.quote(cmd)] if cmd else [])
     opts = ["--cwd=" + shlex.quote(home)] if "$" not in home else []
-    run = ["kitten", "run-shell", shlex.quote("--cwd=" + cwd)]
+    run = [shlex.quote(kitten), "run-shell", shlex.quote("--cwd=" + cwd)]
     if cmd:
         run += ["bash", "-lc", shlex.quote(f"cd -- {shlex.quote(cwd)} 2>/dev/null; {cmd}")]
     return opts, run
 
 
-def session(tabs, saved_states=None, isdir=os.path.isdir, home=None):
+def session(tabs, saved_states=None, isdir=os.path.isdir, home=None, kitten=None):
     """A kitty session file that reopens every tab, with its splits, names, active pane and active
     tab. It follows what kitty's own save_as_session writes: `set_layout_state` arranges the windows
     whose `kitty-unserialize-data` ids it names, so the pairs tree and split sizes come back as they
     were. A tab without a usable layout state comes back as one window (its active one)."""
-    home = home or os.path.expanduser("~")
+    home, kitten = home or os.path.expanduser("~"), kitten or _kitten()
     lines, active = [], None
     for i, t in enumerate(plan(tabs, saved_states, isdir, home)):
         # kitty expands $VARS in a tab name ($$ is a literal $)
@@ -315,7 +324,7 @@ def session(tabs, saved_states=None, isdir=os.path.isdir, home=None):
             parts = ["launch"]
             if t["state"] is not None:
                 parts.append(shlex.quote("kitty-unserialize-data=" + json.dumps({"id": r["id"]})))
-            opts, run = _launch_args(r, home)
+            opts, run = _launch_args(r, home, kitten)
             parts += opts
             if r["focus"] and len(t["panes"]) > 1:
                 parts.append(f"--var={FOCUS_VAR}=1")       # for refocus, after kitty has started

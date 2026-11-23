@@ -21,6 +21,9 @@
 # Log and session files: ${XDG_CACHE_HOME:-~/.cache}/ninelives/kitty-relaunch.log
 set -euo pipefail
 NEW="$HOME/.local/kitty.app/bin/kitty"; [ -x "$NEW" ] || NEW="$(command -v kitty)"
+# The kitten that ships with that kitty: the session runs it for folders with a $ in their name,
+# and kitten may not be on PATH
+KITTEN="$(dirname -- "$(readlink -f -- "$NEW")")/kitten"; [ -x "$KITTEN" ] || KITTEN="$(command -v kitten || true)"
 # (the detached copy is handed the folder in _KR_CACHE: its clean environment may lack XDG_CACHE_HOME)
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}"
 [ -n "${_KR_CACHE:-}" ] && [[ "${_KR_DETACHED:-}" =~ ^[0-9-]+$ ]] && CACHE="$_KR_CACHE"
@@ -136,7 +139,7 @@ fi
 
 save_layouts
 DATA="$(kls)"
-python3 "$TABS_PY" session "$SAVED" <<< "$DATA" > "$SESSION.tmp" && [ -s "$SESSION.tmp" ] \
+NL_KITTEN="$KITTEN" python3 "$TABS_PY" session "$SAVED" <<< "$DATA" > "$SESSION.tmp" && [ -s "$SESSION.tmp" ] \
   || { echo "$(date +%T) FAILED: could not work out what to reopen; kitty left running"; exit 1; }
 # Let the new kitty's own parser read the file first: a session it can't read opens just an error
 # window, and every tab would be gone. (A kitty whose internals differ skips this check.)

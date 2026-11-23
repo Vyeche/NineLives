@@ -72,6 +72,21 @@ class Snapshot(unittest.TestCase):
         self.assertIn("claude --resume to pick", r[0][1])
         self.assertTrue(r[2][1].startswith("claude --continue;"))
 
+    def test_two_spellings_of_one_folder_count_as_one(self):
+        # a symlink and its target are one folder to claude, so --continue would pick the same
+        # session for both panes; each still reopens in the path it had
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            real, link = os.path.join(d, "real"), os.path.join(d, "link")
+            os.mkdir(real)
+            os.symlink(real, link)
+            tabs = [tab(win(real, procs=[["claude"]])), tab(win(link, procs=[["claude"]]))]
+            got = [r.split(kt.US) for r in kt.snapshot(tabs, home="/home/me")]
+            self.assertEqual([g[0] for g in got], [real, link])
+            for g in got:
+                self.assertNotIn("claude --continue", g[1])
+                self.assertIn("claude --resume to pick", g[1])
+
     def test_omp_continues(self):
         cmd = rows([tab(win(procs=[["omp", "-c", "--model", "x y"]]))])[0][1]
         self.assertEqual(cmd, "omp --model 'x y' --continue")
@@ -190,7 +205,7 @@ def launches(lines):
                 cwd = o[len("--cwd="):]
             else:
                 opts.append(o)
-        if args[:2] == ["kitten", "run-shell"]:
+        if len(args) > 1 and os.path.basename(args[0]) == "kitten" and args[1] == "run-shell":
             assert args[2].startswith("--cwd="), line
             cwd, args = args[2][len("--cwd="):], args[3:]
         elif args:
@@ -430,6 +445,19 @@ class OneTruth(unittest.TestCase):
         b = shlex.split(lines[1])
         self.assertEqual(b[-3:], ["kitten", "run-shell", "--cwd=/w/a$b"])     # a shell: nothing after
         self.assertFalse(any("$" in x for x in a + b if x.startswith("--cwd=/home")))
+
+    def test_a_dollar_folder_uses_the_kitten_next_to_kitty(self):
+        # kitten may not be on PATH: kitty-relaunch.sh names the one that ships with the new kitty
+        import shlex
+        t = tab(win("/w/a$b"))
+        with mock.patch.dict(os.environ, {"NL_KITTEN": "/opt/kitty app/bin/kitten", "PATH": "/nowhere"}):
+            a = shlex.split([l for l in kt.session([t], isdir=exists, home="/home/me")
+                             if l.startswith("launch ")][0])
+        self.assertEqual(a[-3:], ["/opt/kitty app/bin/kitten", "run-shell", "--cwd=/w/a$b"])
+        for unusable in ("", "kitten-but-relative"):          # not a path: kitten from PATH
+            with mock.patch.dict(os.environ, {"NL_KITTEN": unusable}):
+                line = [l for l in kt.session([t], isdir=exists, home="/home/me") if l.startswith("launch ")][0]
+            self.assertEqual(shlex.split(line)[-3], "kitten")
 
     def test_a_dollar_folder_pane_restarted_again_keeps_its_folder(self):
         # kitty reports the folder of the window's first process: for Claude in a $ folder that is
