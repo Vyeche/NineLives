@@ -19,11 +19,28 @@
 # --listen-on); with several, it lists them and asks you to run it from a tab of the right one.
 # NL_KITTY_SOCKET=ADDRESS picks one directly and keeps your environment (for the test kitty).
 # Log and session files: ${XDG_CACHE_HOME:-~/.cache}/ninelives/kitty-relaunch.log
+# macOS (new, not yet tried on a real Mac; the Gauntlet checks the parts it can on a macOS runner):
+# no setsid, flock or systemd there, so python3 detaches and locks, and the new kitty starts with
+# only the variables a Mac app gets from the system, plus your locale and PATH.
 set -euo pipefail
-NEW="$HOME/.local/kitty.app/bin/kitty"; [ -x "$NEW" ] || NEW="$(command -v kitty)"
+NEW="$HOME/.local/kitty.app/bin/kitty"; [ -x "$NEW" ] || NEW="$(command -v kitty || true)"
+# macOS: kitty.app isn't on PATH outside kitty's own tabs
+for app in /Applications "$HOME/Applications"; do
+  [ -n "$NEW" ] || { [ -x "$app/kitty.app/Contents/MacOS/kitty" ] && NEW="$app/kitty.app/Contents/MacOS/kitty"; } || true
+done
+[ -n "$NEW" ] || { echo "kitty not found (not on PATH, not in ~/.local/kitty.app or kitty.app)" >&2; exit 1; }
 # The kitten that ships with that kitty: the session runs it for folders with a $ in their name,
-# and kitten may not be on PATH
-KITTEN="$(dirname -- "$(readlink -f -- "$NEW")")/kitten"; [ -x "$KITTEN" ] || KITTEN="$(command -v kitten || true)"
+# and kitten may not be on PATH (readlink -f: macOS 12.3 and newer; python3 for older ones)
+KITTEN="$(dirname -- "$(readlink -f -- "$NEW" 2>/dev/null || python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$NEW")")/kitten"
+[ -x "$KITTEN" ] || KITTEN="$(command -v kitten || true)"
+MACOS=0; [ "$(uname -s)" = Darwin ] && MACOS=1
+# Run a command in a new session, so it outlives the kitty window this was started from: setsid,
+# or where there is none (macOS) python3 (forking first: setsid fails for a process group leader)
+DETACH_PY='import os, sys
+if os.getpid() == os.getpgrp() and os.fork():
+    os._exit(0)
+os.setsid()
+os.execvp(sys.argv[1], sys.argv[1:])'
 # (the detached copy is handed the folder in _KR_CACHE: its clean environment may lack XDG_CACHE_HOME)
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}"
 [ -n "${_KR_CACHE:-}" ] && [[ "${_KR_DETACHED:-}" =~ ^[0-9-]+$ ]] && CACHE="$_KR_CACHE"
@@ -82,6 +99,10 @@ if [[ "${_KR_DETACHED:-}" =~ ^[0-9-]+$ ]] && [ -e "$MARK_DIR/kitty-relaunch-$_KR
   if command -v flock >/dev/null && ! flock -n 9; then
     echo "$(date +%T) another restart is already running; this one stops"; exit 0
   fi
+  # no flock(1) (macOS): the same lock on fd 9 through python3 (it stays with this shell's fd)
+  if ! command -v flock >/dev/null && ! python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)' 2>/dev/null; then
+    echo "$(date +%T) another restart is already running; this one stops"; exit 0
+  fi
 fi
 unset _KR_DETACHED                     # never hand it on (to the new kitty and its tabs)
 if [ $detached != 1 ] && [ "$MODE" != --dry-run ] && [ "$MODE" != --status ]; then
@@ -95,11 +116,22 @@ if [ $detached != 1 ] && [ "$MODE" != --dry-run ] && [ "$MODE" != --status ]; th
   # (Not for a test kitty, NL_KITTY_SOCKET: it keeps the caller's hidden display and test HOME.)
   # (no systemd user manager, or no XDG_RUNTIME_DIR to reach it: keep the environment as it is)
   MGR_KEYS="$({ systemctl --user show-environment 2>/dev/null || true; } | cut -d= -f1)"
+  # macOS has no systemd: keep what a Mac app gets from the system (launchd) when it starts, and
+  # your locale and PATH
+  if [ -z "$MGR_KEYS" ] && [ "$MACOS" = 1 ]; then
+    MGR_KEYS="$(printf '%s\n' HOME USER LOGNAME SHELL PATH TMPDIR LANG SSH_AUTH_SOCK __CF_USER_TEXT_ENCODING \
+      __CFBundleIdentifier COMMAND_MODE SECURITYSESSIONID XPC_FLAGS XPC_SERVICE_NAME LaunchInstanceID; compgen -e | grep '^LC_' || true)"
+  fi
   if [ -n "$MGR_KEYS" ] && [ -z "${NL_KITTY_SOCKET:-}" ]; then
     for v in $(compgen -e); do grep -qxF "$v" <<< "$MGR_KEYS" || unset "$v" 2>/dev/null || true; done
   fi
-  run_id="$$-$RANDOM-$(date +%s%N)"; : > "$MARK_DIR/kitty-relaunch-$run_id.run"
-  _KR_DETACHED="$run_id" _KR_SOCK="$SOCK" _KR_CACHE="$CACHE" setsid nohup bash "$0" "$@" >>"$LOG" 2>&1 < /dev/null &
+  # (digits only: BSD date, on macOS, has no %N and prints an N, which the check above would reject)
+  run_id="$$-$RANDOM-$(date +%s%N | tr -cd '0-9')"; : > "$MARK_DIR/kitty-relaunch-$run_id.run"
+  if command -v setsid >/dev/null; then
+    _KR_DETACHED="$run_id" _KR_SOCK="$SOCK" _KR_CACHE="$CACHE" setsid nohup bash "$0" "$@" >>"$LOG" 2>&1 < /dev/null &
+  else
+    _KR_DETACHED="$run_id" _KR_SOCK="$SOCK" _KR_CACHE="$CACHE" python3 -c "$DETACH_PY" nohup bash "$0" "$@" >>"$LOG" 2>&1 < /dev/null &
+  fi
   echo "Reload running in the background (log: $LOG). The kitty window will close and reopen."
   exit 0
 fi
@@ -185,7 +217,11 @@ if [[ "$SOCK" == unix:/* ]] && [ -S "${SOCK#unix:}" ]; then rm -f -- "${SOCK#uni
 # The session file reopens every tab and pane, sets the layouts and split sizes, names the tabs and
 # focuses the pane and tab you were on, all inside kitty (one failed window can't shift a name or
 # the focus onto another tab, so there are no window ids to track).
-setsid "$NEW" -o allow_remote_control=socket-only --listen-on "$SOCK" --session "$SESSION" >/dev/null 2>&1 < /dev/null &
+if command -v setsid >/dev/null; then
+  setsid "$NEW" -o allow_remote_control=socket-only --listen-on "$SOCK" --session "$SESSION" >/dev/null 2>&1 < /dev/null &
+else
+  python3 -c "$DETACH_PY" "$NEW" -o allow_remote_control=socket-only --listen-on "$SOCK" --session "$SESSION" >/dev/null 2>&1 < /dev/null &
+fi
 for _ in $(seq 1 50); do kls >/dev/null && break; sleep 0.2; done
 if ! kls >/dev/null; then
   echo "$(date +%T) FAILED: the new kitty did not start ($NEW). Start kitty by hand"

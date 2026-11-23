@@ -1,5 +1,6 @@
-# tips.sh — shows one kitty tip when a new shell starts in kitty (sourced from ~/.bashrc): half the
-# time your next quest (from tab_bar.py), otherwise a random tip. Part of NineLives.
+# tips.sh — shows one kitty tip when a new shell starts in kitty (sourced from ~/.bashrc, or ~/.zshrc:
+# it works in bash, 3.2 included, and zsh): half the time your next quest (from tab_bar.py), otherwise
+# a random tip. Part of NineLives.
 # Turn off: kitty-tips off   Show one now: kitty-tips   Quests and badges: kitty-quests
 # Hear the sounds: kitty-sounds   (volume N / classic / ninelives / off / on)
 _kitty_tips=(
@@ -38,6 +39,13 @@ _kitty_tips=(
   "A tab you're looking at doesn't chime when it finishes: you can already see it"
 )
 _nl_state="${NINELIVES_STATE:-$HOME/.local/state/ninelives}"
+# macOS (new, not yet tried on a real Mac): afplay plays the .wav copies install.sh makes
+_nl_mac=""; case "${OSTYPE:-}" in darwin*) _nl_mac=1;; esac
+[ -n "$_nl_mac" ] && _kitty_tips+=("On a Mac, Alt is Option in kitty's shortcuts: Ctrl+Option+→ splits, Option+1 goes to tab 1")
+_nl_play() {  # _nl_play VOLUME FILE: VOLUME on paplay's scale (65536 = full); afplay's is that cubed
+  if [ -n "$_nl_mac" ]; then afplay -v "$(awk -v v="$1" 'BEGIN { printf "%.4f", (v / 65536) ^ 3 }')" "$2" 2>/dev/null
+  else paplay --volume="$1" "$2" 2>/dev/null; fi
+}
 _nl_conf="${KITTY_CONFIG_DIRECTORY:-${XDG_CONFIG_HOME:-$HOME/.config}/kitty}"   # this kitty's config folder (switch files live here)
 kitty-tips() {
   case "${1:-}" in
@@ -51,7 +59,9 @@ kitty-tips() {
          if [ -n "$q" ]; then
            printf '\e[37m🎯 kitty quest: %s  (kitty-quests = all)\e[0m\n' "$q"
          else
-           printf '\e[37m💡 kitty tip: %s  (F1 = all shortcuts)\e[0m\n' "${_kitty_tips[RANDOM % ${#_kitty_tips[@]}]}"
+           # (a slice counts from 0 in bash and zsh alike; zsh's [i] counts from 1. The $((…)): zsh would
+           # read :RANDOM as a modifier)
+           printf '\e[37m💡 kitty tip: %s  (F1 = all shortcuts)\e[0m\n' "${_kitty_tips[@]:$((RANDOM % ${#_kitty_tips[@]})):1}"
          fi;;
   esac
 }
@@ -63,13 +73,15 @@ kitty-sounds() {
     classic)   touch "$k/sounds-classic" && echo "using the desktop's standard sounds (kitty-sounds ninelives switches back)";;
     ninelives) rm -f "$k/sounds-classic" && echo "using the NineLives sounds";;
     volume)
-      if [[ "${2:-}" =~ ^[0-9]+$ ]] && (( $2 >= 5 && $2 <= 100 )); then
+      # (a case pattern, not =~: zsh's =~ needs its regex module)
+      if case "${2:-}" in ""|*[!0-9]*) false;; esac && (( $2 >= 5 && $2 <= 100 )); then
         echo "$2" > "$k/sounds-volume" && echo "tab sounds at $2% (kitty-sounds plays them at that volume)"
       else
         echo "tab sounds at $(cat "$k/sounds-volume" 2>/dev/null || echo 100)%   change: kitty-sounds volume 5-100"
       fi;;
     ""|play)
-      local d=/usr/share/sounds/freedesktop/stereo row name classic what f
+      local d=/usr/share/sounds/freedesktop/stereo ext=oga row name classic what f
+      [ -n "$_nl_mac" ] && d=/System/Library/Sounds && ext=aiff
       local vol=$(( 40000 * $(cat "$k/sounds-volume" 2>/dev/null || echo 100) / 100 ))
       [ -e "$k/sounds-off" ] && echo "(sounds are muted in the tabs: kitty-sounds on, or Ctrl+Alt+M)"
       for row in "done:complete:finished, two notes up" \
@@ -80,9 +92,13 @@ kitty-sounds() {
                  "drop:-:a dragged tab landed"; do
         IFS=: read -r name classic what <<< "$row"
         f="$k/sounds/$name.oga"
-        if [ -e "$k/sounds-classic" ] || [ ! -e "$f" ]; then f="$d/$classic.oga"; fi
+        if [ -n "$_nl_mac" ]; then                 # macOS's own alert sounds for classic
+          f="$k/sounds/$name.wav"
+          case $classic in complete) classic=Glass;; window-question) classic=Ping;; dialog-error) classic=Basso;; esac
+        fi
+        if [ -e "$k/sounds-classic" ] || [ ! -e "$f" ]; then f="$d/$classic.$ext"; fi
         printf '  \e[1m%-10s\e[0m %s\n' "$name" "$what"
-        [ -e "$f" ] && paplay --volume="$vol" "$f" 2>/dev/null
+        [ -e "$f" ] && _nl_play "$vol" "$f"
         sleep 0.5
       done
       echo "kitty-sounds volume 5-100: quieter or louder   classic: the desktop's sounds   off: silence";;
@@ -120,7 +136,7 @@ _nl_quest_list() {  # print quests.txt, wrapping each description under itself t
   while IFS= read -r line; do
     if [[ $line != *$'\x1f'* ]]; then printf '%s\n' "$line"; continue; fi
     IFS=$'\x1f' read -r pre style desc <<< "$line"
-    vis=$(sed 's/\x1b\[[0-9;]*m//g' <<< "$pre"); ind=${#vis}; w=$((cols - ind - 1)); ((w < 20)) && w=20
+    vis=$(sed $'s/\e\\[[0-9;]*m//g' <<< "$pre"); ind=${#vis}; w=$((cols - ind - 1)); ((w < 20)) && w=20
     first=1
     while IFS= read -r part; do
       if ((first)); then printf '%s%s%s\e[0m\n' "$pre" "$style" "$part"; first=0
@@ -148,8 +164,9 @@ ninelives() {  # every NineLives switch at a glance, and the command that change
   vol=$(cat "$c/sounds-volume" 2>/dev/null || echo 100)
   if [ -e "$c/sounds-off" ]; then snd="muted"; else snd="on, ${vol}%"; fi
   [ -e "$c/sounds-classic" ] && snd="$snd, desktop sounds" || snd="$snd, NineLives sounds"
+  local shown="$c"; case $c in "$HOME"/*) shown="~${c#"$HOME"}";; esac
   printf '%sNineLives%s  %skitty %s · config %s%s\n' "$B" "$R" "$D" \
-    "$(kitty --version 2>/dev/null | cut -d' ' -f2)" "${c/#$HOME/\~}" "$R"
+    "$(kitty --version 2>/dev/null | cut -d' ' -f2)" "$shown" "$R"
   _nl_row sounds "$snd" "kitty-sounds [volume N|off|on|classic]"
   _nl_row cat "$([ -e "$c/cat-off" ] && echo hidden || echo shown)" "kitty-cat [off|on]"
   if [ -e "$c/quests-off" ]; then _nl_row quests "hidden (badges kept: $n/16)" "kitty-quests on"
@@ -162,7 +179,8 @@ ninelives() {  # every NineLives switch at a glance, and the command that change
   # is kitty running the installed tab_bar.py? (it keeps the first-loaded one until a restart)
   local running="" installed=""
   [ -s "$_nl_state/tab_bar.running" ] && IFS= read -r running < "$_nl_state/tab_bar.running"
-  [ -r "$c/tab_bar.py" ] && installed=$(sha1sum "$c/tab_bar.py" 2>/dev/null | cut -d' ' -f1)
+  # (macOS has shasum, which is SHA-1 too, instead of sha1sum)
+  [ -r "$c/tab_bar.py" ] && installed=$({ sha1sum "$c/tab_bar.py" 2>/dev/null || shasum "$c/tab_bar.py" 2>/dev/null; } | cut -d' ' -f1)
   if [ -n "$running" ] && [ -n "$installed" ] && [ "$running" != "$installed" ]; then
     printf '  %s!%s %skitty is running an older tab_bar.py: restart kitty to load the installed one%s\n' \
       $'\e[33m' "$R" "$B" "$R"

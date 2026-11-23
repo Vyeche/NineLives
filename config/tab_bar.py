@@ -34,6 +34,7 @@
 import os
 import re
 import subprocess
+import sys
 import time
 
 from kitty.boss import get_boss
@@ -77,6 +78,12 @@ def _config_dir() -> str:
 CONFIG_DIR = _config_dir()
 SOUND_DIR = os.path.join(CONFIG_DIR, "sounds")
 CLASSIC_DIR = "/usr/share/sounds/freedesktop/stereo"
+# macOS (new, not yet tried on a real Mac): no /proc, paplay, gdbus or freedesktop sounds. Read at
+# call time, so the tests can try both. The Linux code paths are the same as before macOS support.
+IS_MACOS = sys.platform == "darwin"
+MAC_SOUNDS = "/System/Library/Sounds"
+# "kitty-sounds classic" on a Mac: macOS's own alert sounds stand in for the freedesktop ones
+MAC_CLASSIC = {"complete.oga": "Glass.aiff", "window-question.oga": "Ping.aiff", "dialog-error.oga": "Basso.aiff"}
 # event: (NineLives file, desktop file for "kitty-sounds classic" or if ours is missing, volume
 # out of 65536). The loudness is in the files themselves; needs-you is the loudest of them.
 SOUNDS = {
@@ -127,6 +134,12 @@ def _plain_command_running(w) -> bool:
         return False
     if not pg or pg == w.child.pid or not w.screen.is_main_linebuf():
         return False
+    if IS_MACOS:                    # this runs 8 times a second: one process's argv, never a scan
+        try:
+            name = os.path.basename((_mac_argv(pg) or [""])[0])
+        except Exception:
+            return False
+        return name not in AGENTS and name not in ("bash", "sh", "zsh", "fish")
     try:
         with open(f"/proc/{pg}/cmdline", "rb") as f:
             name = os.path.basename(f.read().split(b"\0", 1)[0].decode(errors="ignore"))
@@ -142,7 +155,33 @@ AGENT_TTL = 3.0
 _agents: dict = {}           # tab id -> (checked at, mark)
 
 
+def _mac_argv(pid) -> list:
+    """macOS: a process's argv from kitty's own helper (libproc), as `kitty @ ls` gets it there."""
+    from kitty.child import cmdline_of_pid
+    return cmdline_of_pid(pid)
+
+
+GROUPS_TTL = 1.0
+_groups = {"at": -99.0, "map": {}}
+
+
+def _mac_groups() -> dict:
+    """macOS: process group -> its pids, from kitty's own process_group_map. That looks at every
+    process, so one map serves every tab for GROUPS_TTL seconds (agent marks are kept 3 s anyway)."""
+    now = time.monotonic()
+    if now - _groups["at"] >= GROUPS_TTL:
+        try:
+            from kitty.child import process_group_map
+            _groups["map"] = dict(process_group_map())
+        except Exception:
+            _groups["map"] = {}
+        _groups["at"] = now
+    return _groups["map"]
+
+
 def _proc_argv(pid) -> list:
+    if IS_MACOS:
+        return _mac_argv(pid)
     with open(f"/proc/{pid}/cmdline", "rb") as f:
         return [a.decode(errors="ignore") for a in f.read().split(b"\0") if a]
 
@@ -190,9 +229,24 @@ LOOK_BELOW = {"bash", "sh", "zsh", "fish", "dash", "kitten"}
 LOOK_LIMIT = 24             # processes looked at below the leader, at most
 
 
+def _agent_in_group(pg) -> str:
+    """macOS (no /proc): the first agent among the other processes in the leader's group, oldest
+    (lowest pid) first. On Linux _agent_below walks the leader's children instead."""
+    for pid in sorted(p for p in _mac_groups().get(pg, ()) if p != pg)[:LOOK_LIMIT]:
+        try:
+            name = _program(_mac_argv(pid))
+        except Exception:
+            continue                            # exited meanwhile
+        if name in AGENT_MARK:
+            return name
+    return ""
+
+
 def _agent_below(pg) -> str:
     """The first agent among the leader's descendants in its process group, or "". A few small
     reads of /proc/<pid>/task/*/children, not a scan of all of /proc (this runs from draw code)."""
+    if IS_MACOS:
+        return _agent_in_group(pg)
     todo, seen = [pg], 0
     while todo and seen < LOOK_LIMIT:
         try:
@@ -267,6 +321,12 @@ def _note_done(now: float) -> int:
 
 def _sound_file(kind: str) -> str:
     ours, classic, _vol = SOUNDS[kind]
+    if IS_MACOS:
+        # afplay can't read .oga: install.sh adds a .wav of each sound; classic: macOS's own sounds
+        path = os.path.join(SOUND_DIR, os.path.splitext(ours)[0] + ".wav")
+        if os.path.exists(CLASSIC_FILE) or not os.path.isfile(path):
+            path = os.path.join(MAC_SOUNDS, MAC_CLASSIC[classic]) if classic in MAC_CLASSIC else ""
+        return path if path and os.path.isfile(path) else ""
     path = os.path.join(SOUND_DIR, ours)
     if os.path.exists(CLASSIC_FILE) or not os.path.isfile(path):
         path = os.path.join(CLASSIC_DIR, classic) if classic else ""
@@ -313,10 +373,19 @@ def _play(kind: str, tab_id=None) -> None:
     _last_sound.update(at=now, priority=PRIORITY[kind])
     try:
         vol = SOUNDS[kind][2] * _volume_percent() // 100
-        subprocess.Popen(["paplay", f"--volume={vol}", path], stdout=subprocess.DEVNULL,
+        subprocess.Popen(_player(vol, path), stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError:
         pass
+
+
+def _player(vol: int, path: str) -> list:
+    """The command that plays a sound at vol (paplay's scale: 65536 = full)."""
+    if IS_MACOS:
+        # afplay -v taken as a plain gain (1 = as recorded); PulseAudio cubes paplay's volume, so
+        # this is meant to be the same level (not compared by ear on a Mac yet)
+        return ["afplay", "-v", f"{(vol / 65536) ** 3:.4f}", path]
+    return ["paplay", f"--volume={vol}", path]
 
 
 def _status(data) -> tuple:
@@ -1749,14 +1818,23 @@ def _notify(title: str, body: str) -> None:
     if os.environ.get("NINELIVES_QUIET"):            # a dev/test kitty: no desktop notifications
         return
     try:
-        subprocess.Popen(
-            ["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
-             "--object-path", "/org/freedesktop/Notifications",
-             "--method", "org.freedesktop.Notifications.Notify",
-             "NineLives", "0", "starred-symbolic", title, body, "[]", "{}", "6000"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        subprocess.Popen(_notify_cmd(title, body),
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError:
         pass
+
+
+def _notify_cmd(title: str, body: str) -> list:
+    if IS_MACOS:
+        # The text goes to the script as arguments, never into its source. (osascript would read
+        # a first argument starting with "-" as an option.)
+        return ["osascript", "-e", "on run argv",
+                "-e", "display notification (item 2 of argv) with title (item 1 of argv)",
+                "-e", "end run", " " + title if title.startswith("-") else title, body]
+    return ["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
+            "--object-path", "/org/freedesktop/Notifications",
+            "--method", "org.freedesktop.Notifications.Notify",
+            "NineLives", "0", "starred-symbolic", title, body, "[]", "{}", "6000"]
 
 
 def _count_use(qid: str, write: bool = True) -> None:

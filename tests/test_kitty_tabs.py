@@ -627,5 +627,93 @@ class WhichKitty(unittest.TestCase):
         self.assertIsNone(kt._listen_on(["kitty", "--listen-on"]))
 
 
+
+class MacOS(unittest.TestCase):
+    """macOS has no /proc: kitty's pid and the running kittys come from `ps`, and
+    ninelives-macos.conf's sockets live in the temp folder. Fake ps output here; the real ps (any
+    system) in the tests after it; scripts/check-macos.sh does the same on a Mac."""
+    PS_STATS = """    1     0 /sbin/launchd
+  500     1 /Applications/kitty.app/Contents/MacOS/kitty
+  610   500 /Applications/kitty.app/Contents/MacOS/kitten
+  611   610 /bin/bash
+  612   611 node
+  700     1 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+"""
+
+    def test_parses_ps_with_paths_and_spaces(self):
+        got = kt.ps_stats(self.PS_STATS + "junk line\n")
+        self.assertEqual(got[500], ("kitty", 1))
+        self.assertEqual(got[700], ("Google Chrome", 1))
+        self.assertNotIn("junk", str(got))
+
+    def test_kitty_pid_from_ps_where_there_is_no_proc(self):
+        asked = []
+        stat = kt._stat_reader(has_proc=False, ps=lambda args: asked.append(args) or self.PS_STATS)
+        self.assertEqual(kt.kitty_pid([tab(dict(win(), pid=612))], stat), 500)
+        self.assertEqual(len(asked), 1)                  # one listing for every lookup
+        with self.assertRaises(OSError):
+            stat(4242)
+        self.assertIs(kt._stat_reader(has_proc=True), kt._proc_stat)     # Linux: /proc, as before
+
+    def test_running_kitties_from_ps(self):
+        uid = os.getuid()
+        text = (f"{uid} /Applications/kitty.app/Contents/MacOS/kitty --listen-on unix:@a\n"
+                f"{uid} /Applications/kitty.app/Contents/MacOS/kitty\n"                  # from the Dock
+                f"{uid} kitty +runpy print(1)\n"
+                f"{uid + 1} kitty --listen-on unix:@someone-else\n"
+                f"{uid} /bin/zsh -l\n")
+        got = kt.ps_kitties(text, uid)
+        self.assertEqual(got, [["/Applications/kitty.app/Contents/MacOS/kitty", "--listen-on", "unix:@a"]])
+        with mock.patch("os.listdir", side_effect=OSError("no /proc")):
+            self.assertEqual(kt._running_kitties(ps=lambda args: text), got)
+
+    def test_sockets_in_the_temp_folder_on_macos_only(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            for n in ("ninelives-kitty-123", "other-socket"):
+                open(os.path.join(tmp, n), "w").close()
+            env = {"TMPDIR": tmp + "/"}                              # macOS's TMPDIR ends with /
+            self.assertEqual(kt._runtime_sockets(env, macos=True), [os.path.join(tmp, "ninelives-kitty-123")])
+            self.assertEqual(kt._runtime_sockets(env, macos=False), [])          # Linux: as before
+            both = kt._runtime_sockets(dict(env, XDG_RUNTIME_DIR=tmp), macos=True)
+            self.assertEqual(both, [os.path.join(tmp, "ninelives-kitty-123")])   # one folder, once
+            here = "unix:" + os.path.join(tmp, "ninelives-kitty-123")           # kitty's own spelling
+            self.assertEqual(kt.socket_candidates({"KITTY_LISTEN_ON": here}, [], both), [("here", here)])
+
+
+class RealPs(unittest.TestCase):
+    """The ps listings macOS relies on, read from the real ps (GNU procps here, BSD ps on a Mac)."""
+    def setUp(self):
+        import shutil
+        if not shutil.which("ps"):
+            self.skipTest("no ps")
+
+    def test_finds_this_process_and_its_parent(self):
+        stat = kt._stat_reader(has_proc=False)
+        name, ppid = stat(os.getpid())
+        self.assertEqual(ppid, os.getppid())
+        self.assertTrue(name, name)
+
+    def test_finds_a_running_kitty_and_its_socket(self):
+        import subprocess, tempfile, time
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = os.path.join(tmp, "kitty")                     # bash under kitty's name
+            os.symlink("/bin/bash", fake)
+            p = subprocess.Popen([fake, "-c", "sleep 30; :", "--listen-on", "unix:@nl-ps-test"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                for _ in range(50):
+                    found = [a for a in kt.ps_kitties(kt._ps(["-A", "-ww", "-o", "uid=,args="]), os.getuid())
+                             if "unix:@nl-ps-test" in a]
+                    if found:
+                        break
+                    time.sleep(0.05)
+                self.assertTrue(found)
+                self.assertIn(("found", "unix:@nl-ps-test"), kt.socket_candidates({}, found, []))
+            finally:
+                p.kill()
+                p.wait()
+
+
 if __name__ == "__main__":
     unittest.main()

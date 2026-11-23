@@ -7,7 +7,8 @@ from a hidden test kitty with made-up tabs (`bash scripts/record.sh`, see [Testi
 
 ## 1. Install
 You need Linux, **kitty 0.50 or newer** (the [official build](https://sw.kovidgoyal.net/kitty/binary/))
-and Python 3. `paplay` is optional, for the sounds.
+and Python 3. `paplay` is optional, for the sounds. On a Mac it is new and untested on real hardware:
+read [macOS](Installing#macos) first, and tell us how it went.
 ```bash
 git clone https://github.com/Vyeche/NineLives.git && cd NineLives
 bash scripts/install.sh --dry-run   # see what would change; touches nothing
@@ -17,7 +18,7 @@ More options, and how to update later: [Installing](Installing).
 
 ## 2. Add the tip line to `~/.bashrc`
 The tip under each prompt and the `kitty-*` commands (`kitty-sounds`, `kitty-cat`, `kitty-quests`,
-`kitty-tips`, `ninelives`) need one line in `~/.bashrc`:
+`kitty-tips`, `ninelives`) need one line in `~/.bashrc` (zsh, the Mac's default: in `~/.zshrc`):
 ```bash
 if [[ $- == *i* && "$TERM" == xterm-kitty && -r ~/.config/kitty/tips.sh ]]; then . ~/.config/kitty/tips.sh; fi
 ```

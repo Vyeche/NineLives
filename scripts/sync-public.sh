@@ -26,7 +26,7 @@ git -C "$REPO" archive --format=tar HEAD | tar -x -C "$TMP"
 
 WORDS="$REPO/.private-words"
 if [ -s "$WORDS" ]; then
-  pats="$(grep -v '^\s*#' "$WORDS" | grep -v '^\s*$' | paste -sd'|' -)"
+  pats="$(grep -v '^[[:space:]]*#' "$WORDS" | grep -v '^[[:space:]]*$' | paste -sd'|' -)"
   if [ -n "$pats" ]; then
     if hits="$(grep -rIilE -- "$pats" "$TMP")"; then
       echo "Private words found; nothing copied:" >&2; sed "s|$TMP/|  |" <<< "$hits" >&2; exit 1

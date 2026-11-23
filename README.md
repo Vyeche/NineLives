@@ -22,10 +22,12 @@ Spinning ◐ = working · ✓ = finished · amber block ⚠ = **needs you** · �
 - **Python 3** (for the restart script and the tab search).
 - Optional: `paplay` (PipeWire or PulseAudio) for the sounds. Without it everything else works, silently.
 - Built on Pop!_OS COSMIC (Wayland) and works best there; it also runs on other desktops, X11 or Wayland.
-- **macOS:** partly. kitty runs there and so does most of NineLives, but sounds, notifications, agent
-  marks and the restart use Linux tools for now ([issue tracker](https://github.com/Vyeche/NineLives/issues)).
-  Light and dark follow your desktop's light/dark setting where the desktop reports one through the
+- Light and dark follow your desktop's light/dark setting where the desktop reports one through the
   desktop portal (COSMIC does); elsewhere you get the dark theme ([how to change it](docs/wiki/Installing.md#light-and-dark)).
+- **macOS: new, and not yet tried on a real Mac.** Everything that used Linux tools now has a macOS
+  way (sounds with `afplay`, notifications with `osascript`, agent marks and the restart without
+  `/proc`, kitty's socket in your temp folder). A macOS lane in the Gauntlet runs what can be checked on a
+  CI machine; no one has used it on a real Mac yet. [What is checked, what isn't, and what to tell us](docs/wiki/Installing.md#macos).
 - Only for development: `Xvfb` and `ffmpeg` (the hidden test kitty and the sound checks).
 
 ## Install
@@ -38,7 +40,8 @@ Then **close kitty and open it again once**: the sidebar's patches and the remot
 restart script uses only load when kitty starts. Press **F1** in kitty for every shortcut, and run
 `kitty-sounds` to hear what each sound means.
 
-The tip under each prompt and the `kitty-*` commands need one line in `~/.bashrc`:
+The tip under each prompt and the `kitty-*` commands need one line in `~/.bashrc` (zsh, as on a
+Mac: the same line in `~/.zshrc`):
 ```bash
 if [[ $- == *i* && "$TERM" == xterm-kitty && -r ~/.config/kitty/tips.sh ]]; then . ~/.config/kitty/tips.sh; fi
 ```
@@ -109,8 +112,8 @@ Issues and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and
 ## Authoring
 NineLives was written with AI coding assistance, directed and reviewed by a human who decided its
 design and scope. NineLives itself contains no AI and makes no network calls at runtime: sounds play
-through `paplay`, notifications go over the local D-Bus session bus, and everything else stays in
-kitty and your config folder.
+through `paplay` (`afplay` on macOS), notifications go over the local D-Bus session bus (`osascript`
+on macOS), and everything else stays in kitty and your config folder.
 
 NineLives was built with [HOL Guard](https://hol.org/guard) in the loop. Every AI coding session that
 worked on it ran through a local harness where HOL Guard gated actions before the assistant took

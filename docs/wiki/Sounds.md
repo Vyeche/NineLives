@@ -34,6 +34,15 @@ kitty-sounds off / on      # same as Ctrl+Alt+M
 In classic mode "needs you" and "error" are one sound on Pop!_OS (both files link to `dialog-warning.oga`),
 which is one reason NineLives has its own.
 
+## On a Mac
+New, and not yet heard on a real Mac. macOS has no `paplay`, and as far as we know its `afplay`
+can't play Ogg (`.oga`) files (the Gauntlet's macOS lane reports whether `afinfo` reads them), so
+`install.sh` also makes a `.wav` of each sound (with `scripts/make-sounds.py`, the same notes) and
+NineLives plays them with `afplay`. The volume is meant to match Linux: `paplay`'s volume scale is
+cubed, and `afplay -v` is taken to be a plain gain, so NineLives passes the cube. Nobody has compared
+the two by ear yet. `kitty-sounds classic` uses macOS's own Glass (done, badge, rank), Ping
+(needs you) and Basso (error). No `.wav` (say, you copied the files by hand): run `install.sh` again.
+
 ## Changing a sound
 The sounds are made from scratch by `scripts/make-sounds.py` (plain Python synthesis, ffmpeg for `.oga`).
 Edit a sound's notes or its level in `PEAK_DB`, then:

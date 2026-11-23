@@ -137,5 +137,176 @@ class Uninstall(unittest.TestCase):
         self.assertIn("Nothing was touched", out)
 
 
+class MacSounds(unittest.TestCase):
+    """On macOS (a stub uname says Darwin) install.sh adds a .wav of each sound for afplay, which
+    can't play .oga; uninstall.sh removes them again unless you changed one."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dest = os.path.join(self.tmp.name, "kitty")
+        self.bin = os.path.join(self.tmp.name, "bin")
+        os.makedirs(self.bin)
+        with open(os.path.join(self.bin, "uname"), "w") as f:
+            f.write("#!/bin/sh\necho Darwin\n")
+        os.chmod(os.path.join(self.bin, "uname"), 0o755)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_script(self, script, *args):
+        e = dict(os.environ, KITTY_CONFIG_DIRECTORY=self.dest, PATH=self.bin + os.pathsep + os.environ["PATH"])
+        r = subprocess.run(["bash", script, *args], env=e, capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r.stdout
+
+    def wavs(self):
+        d = os.path.join(self.dest, "sounds")
+        return sorted(n for n in os.listdir(d) if n.endswith(".wav")) if os.path.isdir(d) else []
+
+    def test_every_sound_gets_a_wav_and_goes_again(self):
+        oga = sorted(n[:-4] + ".wav" for n in os.listdir(os.path.join(CONFIG, "sounds")) if n.endswith(".oga"))
+        out = self.run_script(INSTALL, "--dry-run")
+        self.assertIn("new     sounds/done.wav", out)
+        self.assertEqual(self.wavs(), [])
+        self.run_script(INSTALL)
+        self.assertEqual(self.wavs(), oga)
+        with open(os.path.join(self.dest, "sounds", "done.wav"), "rb") as f:
+            self.assertEqual(f.read(4), b"RIFF")
+        self.assertIn("same    sounds/done.wav", self.run_script(INSTALL))      # made the same every time
+        with open(os.path.join(self.dest, "sounds", "drop.wav"), "ab") as f:
+            f.write(b"mine")                                                # one you changed
+        out = self.run_script(UNINSTALL)
+        self.assertIn("remove  sounds/done.wav", out)
+        self.assertIn("keep    sounds/drop.wav", out)
+        self.assertEqual(self.wavs(), ["drop.wav"])
+        self.assertFalse(os.path.exists(os.path.join(self.dest, "ninelives-macos.conf")))
+
+    def test_linux_gets_no_wav(self):
+        e = dict(os.environ, KITTY_CONFIG_DIRECTORY=self.dest)
+        if subprocess.run(["uname", "-s"], capture_output=True, text=True).stdout.strip() == "Darwin":
+            self.skipTest("this is a Mac")
+        r = subprocess.run(["bash", INSTALL], env=e, capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.wavs(), [])
+
+
+class KittyAppBundle(unittest.TestCase):
+    """On a Mac kitty is often only in kitty.app, not on PATH: install.sh finds it there for its
+    version and config check (a stub kitty.app here, and a PATH without kitty)."""
+    TOOLS = ("bash", "dirname", "date", "find", "grep", "sort", "sed", "tail", "cmp", "cp", "mkdir",
+             "awk", "basename", "rm", "cut", "head", "uname", "wc", "cat", "python3", "mktemp")
+
+    def test_finds_kitty_in_applications(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as t:
+            tools = {n: shutil.which(n) for n in self.TOOLS}
+            if not all(tools.values()):
+                self.skipTest(f"missing: {[n for n, p in tools.items() if not p]}")
+            os.makedirs(os.path.join(t, "path"))
+            for n, p in tools.items():
+                os.symlink(p, os.path.join(t, "path", n))
+            app = os.path.join(t, "home", "Applications", "kitty.app", "Contents", "MacOS")
+            os.makedirs(app)
+            log = os.path.join(t, "kitty.log")
+            with open(os.path.join(app, "kitty"), "w") as f:
+                f.write(f'#!/bin/sh\necho "$1" >> "{log}"\n[ "$1" = --version ] && echo "kitty 0.51.0 created by Kovid Goyal"\nexit 0\n')
+            os.chmod(os.path.join(app, "kitty"), 0o755)
+            e = {"PATH": os.path.join(t, "path"), "HOME": os.path.join(t, "home"),
+                 "KITTY_CONFIG_DIRECTORY": os.path.join(t, "kitty")}
+            r = subprocess.run(["bash", INSTALL], env=e, capture_output=True, text=True, timeout=120)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("Config check: OK", r.stdout)
+            self.assertNotIn("kitty not found", r.stderr)
+            with open(log) as f:
+                self.assertEqual(f.read().split(), ["--version", "+runpy"])
+
+
+def kitty_conf(os_name, *names):
+    """Options from config/kitty.conf as kitty itself reads it on os_name ("linux" or "macos"), by
+    kitty's own parser (kitty +runpy). None when there is no kitty 0.50+ here."""
+    import json, shutil
+    kitty = shutil.which("kitty")
+    if not kitty:
+        return None
+    code = ("import json, sys, kitty.conf.utils as u\n"
+            f"u.os_name = lambda: {os_name!r}\n"
+            "from kitty.config import load_config\n"
+            "o = load_config(sys.argv[-1])\n"
+            "km = [d.definition for v in o.keyboard_modes[''].keymap.values() for d in v]\n"
+            "print(json.dumps({'listen_on': o.listen_on, 'maps': km}))")
+    # (kitty prints a bad line or a missing include on stderr: there must be none)
+    r = subprocess.run([kitty, "+runpy", code, os.path.join(CONFIG, "kitty.conf")], capture_output=True, text=True)
+    try:
+        return dict(json.loads(r.stdout.strip().splitlines()[-1]), errors=r.stderr.strip())
+    except (ValueError, IndexError):
+        return None
+
+
+class KittyConf(unittest.TestCase):
+    """config/kitty.conf on each system, read by the real kitty: Linux keeps its socket in
+    $XDG_RUNTIME_DIR as before; macOS (no XDG_RUNTIME_DIR) reads ninelives-macos.conf too."""
+    def setUp(self):
+        self.linux, self.mac = kitty_conf("linux"), kitty_conf("macos")
+        if self.linux is None or self.mac is None:
+            self.skipTest("no kitty 0.50+ here to read the config")
+
+    def mute_map(self, conf):
+        # kitty uses the last mapping of a key: the one ninelives-macos.conf adds, on a Mac
+        return [m for m in conf["maps"] if "sounds-off" in m][-1]
+
+    def test_kitty_reads_both_without_complaint(self):
+        self.assertEqual(self.linux["errors"], "")
+        self.assertEqual(self.mac["errors"], "")
+
+    def test_linux_is_unchanged(self):
+        self.assertEqual(self.linux["listen_on"], "unix:${XDG_RUNTIME_DIR}/ninelives-kitty-{kitty_pid}")
+        self.assertIn("paplay --volume=", self.mute_map(self.linux))
+
+    def test_macos_socket_and_player(self):
+        self.assertEqual(self.mac["listen_on"], "unix:ninelives-kitty-{kitty_pid}")
+        self.assertIn("afplay -v", self.mute_map(self.mac))
+        # kitty puts a relative socket in tempfile.gettempdir(): macOS's $TMPDIR is about 49
+        # characters; a socket path can be at most 103 there
+        tmpdir = "/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T"
+        self.assertLess(len(f"{tmpdir}/ninelives-kitty-{2**31}"), 104)
+
+
+class MacMuteKey(unittest.TestCase):
+    """The Ctrl+Alt+M command in ninelives-macos.conf, run with a stub afplay."""
+    def setUp(self):
+        import shlex
+        self.tmp = tempfile.TemporaryDirectory()
+        t = self.tmp.name
+        self.conf, self.bin, self.log = os.path.join(t, "kitty"), os.path.join(t, "bin"), os.path.join(t, "log")
+        os.makedirs(os.path.join(self.conf, "sounds"))
+        os.makedirs(self.bin)
+        with open(os.path.join(self.bin, "afplay"), "w") as f:
+            f.write(f'#!/bin/sh\necho "$*" >> "{self.log}"\n')
+        os.chmod(os.path.join(self.bin, "afplay"), 0o755)
+        with open(os.path.join(CONFIG, "ninelives-macos.conf"), encoding="utf-8") as f:
+            line = next(l for l in f if l.startswith("map ctrl+alt+m "))
+        args = shlex.split(line.split(None, 2)[2])            # launch --type=background sh -c '…'
+        self.command = args[args.index("-c") + 1]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def press(self):
+        env = {"KITTY_CONFIG_DIRECTORY": self.conf, "PATH": self.bin + ":/usr/bin:/bin", "HOME": self.tmp.name}
+        subprocess.run(["sh", "-c", self.command], env=env, check=True, timeout=10)
+
+    def test_mutes_then_unmutes_with_the_finished_chime(self):
+        open(os.path.join(self.conf, "sounds", "done.wav"), "w").close()
+        self.press()
+        self.assertTrue(os.path.exists(os.path.join(self.conf, "sounds-off")))
+        self.assertFalse(os.path.exists(self.log))
+        with open(os.path.join(self.conf, "sounds-volume"), "w") as f:
+            f.write("50\n")
+        self.press()
+        self.assertFalse(os.path.exists(os.path.join(self.conf, "sounds-off")))
+        with open(self.log) as f:
+            self.assertEqual(f.read().split(), ["-v", f"{(20000 / 65536) ** 3:.4f}",
+                                                os.path.join(self.conf, "sounds", "done.wav")])
+
+
 if __name__ == "__main__":
     unittest.main()

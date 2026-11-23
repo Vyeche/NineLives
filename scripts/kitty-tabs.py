@@ -32,10 +32,12 @@ snapshot: the same for each tab's active pane (command empty for a shell); name 
   name if you renamed it, else empty; active is 1 for the tab you were on.
 busy: tabs a restart would interrupt (see kitty-relaunch.sh --status).
 kitty-pid: a window's pid can be a process kitty started under a wrapper (launch --hold runs the
-  command under kitten), so its parents are followed up to kitty itself.
+  command under kitten), so its parents are followed up to kitty itself (from /proc; on macOS,
+  which has none, from one `ps` listing).
 sockets (no stdin): "here ADDRESS" for the kitty this runs in ($KITTY_LISTEN_ON), then "found ADDRESS"
   for every other kitty of yours with a remote-control socket (one started with --listen-on, or one
-  with NineLives' listen_on from kitty.conf). The test and dev kittys' sockets are never offered:
+  with NineLives' listen_on from kitty.conf; on macOS, ninelives-macos.conf's in the temp folder;
+  kittys are found in /proc, or with `ps` on macOS). The test and dev kittys' sockets are never offered:
   their own scripts restart them. kitty-relaunch.sh uses the first one that answers.
 Tabs from every kitty OS window on the socket are included, in order (they reopen in one window).
 """
@@ -43,7 +45,9 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
+import tempfile
 
 SHELLS = {"bash", "sh", "zsh", "fish", "dash"}
 AGENTS = {"claude", "omp", "opencode", "codex", "aider", "gemini"}   # idle at their prompt != busy
@@ -409,6 +413,41 @@ def _proc_stat(pid):
     return comm, int(raw[raw.rindex(")") + 1:].split()[1])
 
 
+def _ps(args, run=subprocess.run) -> str:
+    """The output of `ps ARGS` ("" if ps fails)."""
+    try:
+        return run(["ps", *args], capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def ps_stats(text):
+    """{pid: (name, ppid)} from `ps -A -ww -o pid=,ppid=,comm=`. macOS's comm is the program's path
+    (/Applications/kitty.app/Contents/MacOS/kitty), which may have spaces: the rest of the line."""
+    out = {}
+    for line in text.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            out[int(parts[0])] = (os.path.basename(parts[2].strip()), int(parts[1]))
+    return out
+
+
+def _stat_reader(has_proc=None, ps=_ps):
+    """How kitty_pid reads a process: /proc/<pid>/stat where there is a /proc (Linux), else a
+    lookup in one `ps` listing of every process (macOS)."""
+    if has_proc is None:
+        has_proc = os.path.isdir("/proc/self")
+    if has_proc:
+        return _proc_stat
+    table = ps_stats(ps(["-A", "-ww", "-o", "pid=,ppid=,comm="]))
+
+    def stat(pid):
+        if pid not in table:
+            raise OSError(f"no process {pid}")
+        return table[pid]
+    return stat
+
+
 def kitty_pid(tabs, stat=_proc_stat):
     """The pid of the kitty these windows run in: from a window's pid up through its parents to the
     first process named kitty (a window's pid can be its command under a wrapper kitty put in
@@ -452,7 +491,9 @@ def busy(tabs):
 # back with your desktop's environment (real config, display and sounds), so only NL_KITTY_SOCKET
 # can point the restart at them.
 OWN_SOCKETS = {"unix:@ninelives-test-kitty", "unix:@ninelives-dev-kitty"}
-CONFIG_SOCKET = "ninelives-kitty-"      # listen_on in config/kitty.conf: $XDG_RUNTIME_DIR/ninelives-kitty-<pid>
+# listen_on in config/kitty.conf: $XDG_RUNTIME_DIR/ninelives-kitty-<pid>; on macOS (ninelives-macos.conf)
+# the same name in the temp folder ($TMPDIR)
+CONFIG_SOCKET = "ninelives-kitty-"
 
 
 def _listen_on(argv):
@@ -468,7 +509,7 @@ def _listen_on(argv):
 def socket_candidates(env, kitty_cmdlines=(), runtime_files=()):
     """[(where, address)]: where is "here" for the kitty this runs in, "found" for others.
     env: the environment; kitty_cmdlines: argv lists of your running kitty processes;
-    runtime_files: socket files in $XDG_RUNTIME_DIR named like NineLives' listen_on."""
+    runtime_files: socket files in $XDG_RUNTIME_DIR (macOS: the temp folder) named like NineLives' listen_on."""
     out, seen = [], set(OWN_SOCKETS)
     here = env.get("KITTY_LISTEN_ON", "")
     # fd:N is a connection kitty hands one launched program (launch --allow-remote-control), not a socket
@@ -484,13 +525,29 @@ def socket_candidates(env, kitty_cmdlines=(), runtime_files=()):
     return out
 
 
-def _running_kitties():
-    """argv of each kitty process you own (from /proc; empty where there is no /proc)."""
+def _is_kitty(argv):
+    return bool(argv) and os.path.basename(argv[0]) == "kitty" and len(argv) > 1 and not argv[1].startswith("+")
+
+
+def ps_kitties(text, uid):
+    """argv of each kitty process of yours from `ps -A -ww -o uid=,args=` (where there is no /proc:
+    macOS). ps joins a command's arguments with spaces, so one with a space in it comes back split;
+    what matters here, a --listen-on address, has none."""
+    out = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) > 1 and parts[0] == str(uid) and _is_kitty(parts[1:]):
+            out.append(parts[1:])
+    return out
+
+
+def _running_kitties(ps=_ps):
+    """argv of each kitty process you own (from /proc; with ps where there is no /proc)."""
     out = []
     try:
         pids = [p for p in os.listdir("/proc") if p.isdigit()]
     except OSError:
-        return out
+        return ps_kitties(ps(["-A", "-ww", "-o", "uid=,args="]), os.getuid())
     for pid in pids:
         try:
             if os.stat(f"/proc/{pid}").st_uid != os.getuid():
@@ -499,19 +556,24 @@ def _running_kitties():
                 argv = [a.decode("utf-8", "replace") for a in f.read().split(b"\0") if a]
         except OSError:
             continue
-        if argv and os.path.basename(argv[0]) == "kitty" and len(argv) > 1 and not argv[1].startswith("+"):
+        if _is_kitty(argv):
             out.append(argv)
     return out
 
 
-def _runtime_sockets(env):
-    d = env.get("XDG_RUNTIME_DIR", "")
-    if not d:
-        return []
-    try:
-        return [os.path.join(d, n) for n in os.listdir(d) if n.startswith(CONFIG_SOCKET)]
-    except OSError:
-        return []
+def _runtime_sockets(env, macos=sys.platform == "darwin"):
+    """Socket files named like NineLives' listen_on: in $XDG_RUNTIME_DIR, and on macOS in the temp
+    folder, where ninelives-macos.conf's relative listen_on puts them (kitty: tempfile.gettempdir())."""
+    dirs = [env.get("XDG_RUNTIME_DIR", "")]
+    if macos:
+        dirs.append(env.get("TMPDIR") or tempfile.gettempdir())
+    out = []
+    for d in dirs:
+        try:
+            out += [os.path.join(d, n) for n in os.listdir(d) if n.startswith(CONFIG_SOCKET)] if d else []
+        except OSError:
+            pass
+    return list(dict.fromkeys(out))         # (the same folder twice, as $TMPDIR and $TMPDIR/)
 
 
 def all_tabs(data):
@@ -528,7 +590,7 @@ def all_tabs(data):
 
 def main():
     modes = {"snapshot": snapshot, "show": show, "busy": busy, "session": session, "refocus": refocus,
-             "kitty-pid": lambda tabs: [str(p) for p in [kitty_pid(tabs)] if p]}
+             "kitty-pid": lambda tabs: [str(p) for p in [kitty_pid(tabs, _stat_reader())] if p]}
     args = sys.argv[1:]
     if args == ["sockets"]:
         env = dict(os.environ)
