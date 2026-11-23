@@ -10,6 +10,8 @@
 #   bash scripts/test-kitty.sh sounds                              which sounds it would have played
 #   bash scripts/test-kitty.sh relaunch [--dry-run]                kitty-relaunch.sh on this kitty only
 #   bash scripts/test-kitty.sh stop
+# NL_TEST_SCENE=none starts it with one empty tab instead of one tab per status (scripts/record.sh
+# builds its own scenes).
 # Files (config copy, screenshots, logs): $NL_TEST_DIR, default ${TMPDIR:-/tmp}/ninelives-test
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -89,6 +91,7 @@ ST
   echo $! > "$T/kitty.pid"
   for _ in $(seq 1 40); do k ls >/dev/null 2>&1 && break; sleep 0.25; done
   k ls >/dev/null 2>&1 || { echo "kitty did not start:" >&2; tail -5 "$T/kitty.log" >&2; exit 1; }
+  if [ "${NL_TEST_SCENE:-}" = none ]; then echo "Test kitty running ($theme, $size), one empty tab."; exit 0; fi
   # one tab per status
   # one tab per status (status, then where the sidebar gets it from)
   tab "$W/webapp" "npm run build"                                         # plain command running
@@ -125,5 +128,5 @@ relaunch)
   ;;
 sounds) sed "s|$T/home/.config/kitty/sounds/||; s|/usr/share/sounds/freedesktop/stereo/|classic:|" "$T/stub.log" 2>/dev/null ;;
 stop) stop ;;
-*) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+*) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

@@ -22,10 +22,18 @@ The top of the sidebar has a search row, like Warp's:
 - **×** at the right end of the tab you're on closes it (it asks first if something is running).
   kitty can't tell where the mouse hovers, so only the current tab has one.
 
+![Clicking + opens a fifth tab, clicking its × closes it, then clicking tab 3 and tab 2 switches to them while the hint line under New tab says Alt+3 also gets here](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/buttons.gif)
+
 Clicking a button doesn't earn that shortcut's quest badge: the quests teach the keys.
 `kitty-buttons off` hides the row and the ×, `kitty-buttons on` brings them back.
 
 ## Status
+![Every state at once in the dark theme: spinning blue icons for a running build, omp and Claude, 1m elapsed on the working tabs, a red ✗ for a failed deploy; then one tab finishes with a sparkle that lands on a green check, a notes tab gets a ● for new output, and another tab turns into a blinking amber block while the cat says =O.O= ! and ⚠1 appears in the search row](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/status.gif)
+
+The same in the light theme:
+
+![The same states in the light theme: spinners, a sparkle landing on a check, a ● for new output and a blinking amber block for the tab that needs you](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/status-light.gif)
+
 | Icon | Colour | Means |
 | --- | --- | --- |
 | ◐◓◑◒ spinning | blue | working: Claude or another agent is busy, a progress report is running, or a command runs in a plain shell tab |
@@ -70,6 +78,8 @@ with the badge name for 8 seconds. See [Quests and badges](Quests-and-Badges).
 | rename | **Ctrl+Shift+R** |
 
 Click anywhere on a tab's two lines or the gap below them; the whole block belongs to the tab.
+
+![The search box (Ctrl+Shift+Space) opens over the current tab; typing api narrows the list to two tabs, Tab steps through the All, Waiting, Working and Done filters with their counts, typing migr leaves one tab and Enter goes there](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/search.gif)
 
 ### Dragging on COSMIC
 kitty 0.50 hands a dragged tab to the compositor, which COSMIC ignores, so kitty's own drag does nothing

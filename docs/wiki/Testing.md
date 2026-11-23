@@ -80,6 +80,26 @@ ffmpeg -f x11grab -framerate 16 -video_size 160x40 -i :97+0,660 -t 2.6 \
   -vf "fps=8,scale=iw*2:ih*2:flags=neighbor,tile=7x3" -frames:v 1 strip.png
 ```
 
+`NL_TEST_SCENE=none bash scripts/test-kitty.sh start` starts the test kitty with one empty tab instead
+of one tab per status, for building a scene of your own.
+
+## Recording the GIFs
+The GIFs in the README and the wiki (`docs/images/gifs/`) and the Getting started stills
+(`docs/images/steps/`) come from `scripts/record.sh`. Each recording starts the hidden test kitty with
+its own made-up tabs, drives it (states are written to the fake agents' terminals, clicks go through
+`xclick.py`, the restart through `test-kitty.sh relaunch`), records the display with ffmpeg's x11grab
+at 10 fps and turns that into a GIF with a palette made for it. Make them again after a UI change:
+```bash
+bash scripts/record.sh list              # getting-started status status-light search buttons streak restart
+bash scripts/record.sh streak search     # some of them
+bash scripts/record.sh all               # all of them (about 4 minutes: status waits a minute so times show)
+```
+Sidebar recordings are doubled in size (nearest-neighbour, so text stays crisp); whole-window ones are
+1:1. The test window is 960 px wide: below about 950 px kitty makes the sidebar narrower and the end of
+the search row is cut off (`…+`). Look at the result before committing, and keep each GIF small (they are
+50–200 KB). Like the test kitty, it uses the hidden display only, so run it when no one else
+(`check.sh` included) is using the test kitty.
+
 **Checks before committing a tab_bar.py change** (beyond `check.sh`)
 - A screenshot in both themes.
 - The reload path: start with the old file, copy the new one in, `kitty @ load-config`. There should be no errors in the kitty log, and sounds should not play twice.

@@ -5,6 +5,11 @@ once. Every session is a tab in a left sidebar with a live status icon; a quiet 
 tell you when a tab finishes or needs you; tabs drag to reorder; and one script restarts kitty and
 brings every tab back. Nine lives, one cat.
 
+![Four tabs in the NineLives sidebar: two start working with spinning blue icons, one finishes with a gold sparkle that lands on a green check while the cat at the bottom sings a note, another turns into a blinking amber block while the cat says =O.O= ! and ⚠1 appears in the search row, then Ctrl+Alt+U jumps to the waiting tab and a First Responder badge sparkles](docs/images/gifs/getting-started.gif)
+
+New here? The [Getting started](docs/wiki/Getting-Started.md) walkthrough goes from install to your
+first "needs you" in pictures.
+
 ![The sidebar in the dark and light themes: working tabs spin, a finished one has ✓, the one waiting for you has an amber block, an error has ✗, and the cat at the bottom says a tab needs you](docs/images/sidebar.png)
 
 Spinning ◐ = working · ✓ = finished · amber block ⚠ = **needs you** · ✗ = error · ● = new output ·
@@ -40,7 +45,10 @@ if [[ $- == *i* && "$TERM" == xterm-kitty && -r ~/.config/kitty/tips.sh ]]; then
 bash scripts/kitty-relaunch.sh --when-idle   # wait until no tab is busy, then restart and reopen every tab
 ```
 Run it from a tab of the kitty you want to restart. Each tab comes back in its folder, splits and
-names included; Claude Code resumes its session. Use it after updating (`git pull`, then
+names included; Claude Code resumes its session.
+
+![Two split tabs, frontend + tests and api with Claude, before a restart; the kitty window closes, and a moment later the same tabs come back with the same names, panes and split sizes](docs/images/gifs/restart.gif)
+ Use it after updating (`git pull`, then
 `bash scripts/install.sh`). More in [Installing](docs/wiki/Installing.md#restart-kitty-and-keep-every-tab).
 
 ## Uninstall
@@ -63,6 +71,16 @@ backup `install.sh` made of your own config. Then restart kitty and, if you like
 | **Splits** | **Ctrl+Alt+→/↓** split, **Ctrl+Alt+arrows** move, **Ctrl+Alt+Z** zoom |
 | **Look** | COSMIC colours, light and dark; soft "dusty" terminal colours; DejaVu Sans Mono 12 |
 
+**Find a tab** with **Ctrl+Shift+Space**: type part of a name, folder or number, **Tab** to show only
+Waiting, Working or Done tabs, **Enter** to go there.
+
+![The search box opens over the current tab; typing api narrows the list to two tabs, Tab steps through the All, Waiting, Working and Done filters with their counts, typing migr leaves one tab and Enter jumps to it](docs/images/gifs/search.gif)
+
+**Buttons** in the search row: **+** opens a tab, **×** closes the tab you're on, and a click on a tab
+goes there.
+
+![Clicking + opens a fifth tab, clicking its × closes it, then clicking tab 3 and tab 2 switches to them while the hint line under New tab says Alt+3 also gets here](docs/images/gifs/buttons.gif)
+
 `ninelives` shows every setting at a glance. Everything can be turned off: `kitty-sounds off`, `kitty-cat off`,
 `kitty-quests off`, `kitty-tips off`, `kitty-buttons off`
 ([all switches](docs/wiki/Commands-and-Switches.md)).
@@ -72,6 +90,7 @@ The [wiki](https://github.com/Vyeche/NineLives/wiki) (source in [`docs/wiki/`](d
 
 | Page | What |
 | --- | --- |
+| [Getting started](docs/wiki/Getting-Started.md) | install, first restart, and a walkthrough in pictures |
 | [What's new](docs/wiki/Whats-New.md) | recent changes |
 | [Installing](docs/wiki/Installing.md) | install, update, restart without losing tabs, light and dark |
 | [The sidebar](docs/wiki/The-Sidebar.md) | every icon, colour and number |

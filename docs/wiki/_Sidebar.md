@@ -2,6 +2,7 @@
 
 - [Home](Home)
 - [What's new](Whats-New)
+- [Getting started](Getting-Started)
 - [Installing](Installing)
 - [The sidebar](The-Sidebar)
 - [Sounds](Sounds)

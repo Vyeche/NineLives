@@ -12,6 +12,8 @@ own "complete" chime. Each has its own shape, so you can tell them apart without
 | **rank** | a short run up to a chord | you reached a new rank |
 | **drop** | one tiny wooden tick | a dragged tab landed (barely there) |
 
+![Three working tabs finish one after another, each with a sparkle that lands on a check, while the cat at the bottom sings ♪, then ♪♪, then ♪♪♪ as the chimes climb](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/streak.gif)
+
 ## When sounds don't play
 - **You're looking at it.** If the tab that finishes or fails is the one on screen in the kitty window you're using, there's no sound. "Needs you" still plays.
 - **Bursts play once.** Sounds within about a second of each other play only the most important one (rank, badge, needs you, error, done, drop).

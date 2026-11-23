@@ -37,6 +37,8 @@ bash scripts/kitty-relaunch.sh --status      # which tabs --when-idle would wait
 bash scripts/kitty-relaunch.sh --when-idle   # wait until every tab is idle (~30 s quiet), then restart
 bash scripts/kitty-relaunch.sh               # restart now
 ```
+![Two split tabs, frontend + tests (three panes) and api with Claude (two panes), before a restart; the kitty window closes, and a moment later the same tabs come back with the same names, panes and split sizes](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/restart.gif)
+
 A tab counts as busy while Claude (or another agent) is working **or waiting for you** (a restart would
 drop its question), while omp/opencode show a spinner, or while a plain shell runs a command (a build, a
 test run). Editors, pagers and `top` that just sit open don't count.

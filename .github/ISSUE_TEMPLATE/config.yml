@@ -3,3 +3,6 @@ contact_links:
   - name: Security problem
     url: https://github.com/Vyeche/NineLives/blob/main/SECURITY.md
     about: Report it privately as SECURITY.md describes, not in a public issue.
+  - name: Question or idea
+    url: https://github.com/Vyeche/NineLives/discussions
+    about: Ask setup questions, share ideas and your setup in Discussions.

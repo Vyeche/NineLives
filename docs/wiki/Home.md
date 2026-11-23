@@ -7,6 +7,8 @@ brings every tab back. Nine lives, one cat.
 
 ![The sidebar in the dark and light themes](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/sidebar.png)
 
+![Tabs start working with spinning icons, one finishes with a sparkle and a check while the cat sings, another needs you with a blinking amber block and ⚠1 in the search row, and Ctrl+Alt+U jumps to it](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/getting-started.gif)
+
 ```
   1   proj-one                     the tab you're on (accent colour)
       alpha/proj-one
@@ -19,6 +21,7 @@ brings every tab back. Nine lives, one cat.
 ```
 
 ## Start here
+- [Getting started](Getting-Started): install, first restart, and a walkthrough in pictures
 - [What's new](Whats-New): recent changes
 - [Installing](Installing): install, update, restart without losing tabs
 - [The sidebar](The-Sidebar): what every icon, colour and number means
