@@ -129,7 +129,9 @@ printf '%s\n' "$out" | sed 's/^/        /'
 
 echo "The real kitty"
 # a config folder of its own, muted, no notifications; its socket from ninelives-macos.conf
-K="$TMP/real"; mkdir -p "$K/state" "$K/cache"
+# (a space in its name on purpose: every path below, KENV's included, must stay one argument; a split
+# one makes env run part of a path instead of kitty, and the early exit below then fails)
+K="$TMP/real kitty"; mkdir -p "$K/state" "$K/cache"
 KITTY_CONFIG_DIRECTORY="$K/conf" bash scripts/install.sh >/dev/null 2>&1
 touch "$K/conf/sounds-off"
 mkdir -p "$K/work/code/webapp"; ln -s "$(command -v sleep)" "$K/work/claude"
