@@ -385,7 +385,8 @@ def _player(vol: int, path: str) -> list:
     if IS_MACOS:
         # afplay -v taken as a plain gain (1 = as recorded); PulseAudio cubes paplay's volume, so
         # this is meant to be the same level (not compared by ear on a Mac yet)
-        return ["afplay", "-v", f"{(vol / 65536) ** 3:.4f}", path]
+        # (8 decimals: at 5 % the gain is about 0.00003, which 4 would round to silence)
+        return ["afplay", "-v", f"{(vol / 65536) ** 3:.8f}", path]
     return ["paplay", f"--volume={vol}", path]
 
 

@@ -97,7 +97,12 @@ class NormalRestart(unittest.TestCase):
         d = self.d
         env = {"PATH": self.path(), "HOME": f"{d}/home", "KITTY_LISTEN_ON": "unix:@fake",
                "XDG_CACHE_HOME": f"{d}/cache", "XDG_RUNTIME_DIR": f"{d}/run",
-               "CLAUDE_CODE_CHILD_SESSION": "1", "LC_ALL": "C"}
+               "CLAUDE_CODE_CHILD_SESSION": "1", "LC_ALL": "C",
+               # a kitty with a config folder of its own (KITTY_CONFIG_DIRECTORY or XDG_CONFIG_HOME)
+               # must come back with that folder, not the default one
+               "KITTY_CONFIG_DIRECTORY": f"{d}/my kitty conf", "XDG_CONFIG_HOME": f"{d}/xdg",
+               # kitty.app is looked for here only, never in the real /Applications
+               "NL_APP_DIRS": f"{d}/home/Applications"}
         r = subprocess.run(["bash", RELAUNCH], env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("running in the background", r.stdout)
@@ -114,10 +119,12 @@ class NormalRestart(unittest.TestCase):
         self.assertIn("--listen-on unix:@fake", args)       # the new kitty keeps the address
         self.assertIn("--session", args)
         started_env = read(f"{d}/started-env")
-        leaks = getattr(self, "leaks", ("_KR_SOCK=", "_KR_CACHE=", "_KR_DETACHED=", "KITTY_LISTEN_ON=", "XDG_CACHE_HOME="))
+        leaks = getattr(self, "leaks", ("_KR_SOCK=", "_KR_CACHE=", "_KR_DETACHED=", "_KR_NEW=", "KITTY_LISTEN_ON=", "XDG_CACHE_HOME="))
         for leak in leaks:
             self.assertNotIn("\n" + leak, "\n" + started_env, leak)
         self.started_env, self.log = started_env, text
+        self.assertIn(f"\nKITTY_CONFIG_DIRECTORY={d}/my kitty conf\n", "\n" + started_env)
+        self.assertIn(f"\nXDG_CONFIG_HOME={d}/xdg\n", "\n" + started_env)
 
 
 
@@ -127,7 +134,7 @@ class NoSystemdUserManager(NormalRestart):
     SYSTEMCTL = "#!/bin/sh\nexit 1\n"
 
     def test_restarts_the_kitty_it_runs_in_from_the_background(self):
-        self.leaks = ("_KR_SOCK=", "_KR_CACHE=", "_KR_DETACHED=")     # nothing is cleaned up here
+        self.leaks = ("_KR_SOCK=", "_KR_CACHE=", "_KR_DETACHED=", "_KR_NEW=")     # nothing is cleaned up here
         if sys.platform == "darwin":                  # (on a Mac it keeps what a Mac app gets)
             self.leaks += ("CLAUDE_CODE_CHILD_SESSION=", "KITTY_LISTEN_ON=")
         super().test_restarts_the_kitty_it_runs_in_from_the_background()
@@ -145,7 +152,7 @@ class MacLike(NormalRestart):
     SYSTEMCTL = None
     MAC_KEEP = {"HOME", "USER", "LOGNAME", "SHELL", "PATH", "TMPDIR", "LANG", "SSH_AUTH_SOCK",
                 "__CF_USER_TEXT_ENCODING", "__CFBundleIdentifier", "COMMAND_MODE", "SECURITYSESSIONID",
-                "XPC_FLAGS", "XPC_SERVICE_NAME", "LaunchInstanceID",
+                "XPC_FLAGS", "XPC_SERVICE_NAME", "LaunchInstanceID", "KITTY_CONFIG_DIRECTORY", "XDG_CONFIG_HOME",
                 "LC_ALL", "PWD", "SHLVL", "_", "OLDPWD"}        # (the last four: bash's own)
 
     def setUp(self):
@@ -174,7 +181,7 @@ class MacLike(NormalRestart):
         return f"{self.d}/bin:{self.d}/sys"
 
     def test_restarts_the_kitty_it_runs_in_from_the_background(self):
-        self.leaks = ("_KR_SOCK=", "_KR_CACHE=", "_KR_DETACHED=", "KITTY_LISTEN_ON=", "XDG_CACHE_HOME=",
+        self.leaks = ("_KR_SOCK=", "_KR_CACHE=", "_KR_DETACHED=", "_KR_NEW=", "KITTY_LISTEN_ON=", "XDG_CACHE_HOME=",
                       "CLAUDE_CODE_CHILD_SESSION=")
         super().test_restarts_the_kitty_it_runs_in_from_the_background()
         names = {l.split("=", 1)[0] for l in self.started_env.splitlines() if "=" in l}

@@ -74,6 +74,12 @@ if [ -n "$wavs" ]; then
     else echo "  keep    sounds/$(basename "$w")   (changed since it was installed: yours now)"; kept=$((kept + 1)); fi
   done <<< "$wavs"
 fi
+# their backups (an update made with other sounds): NineLives' own most likely, but nothing here can
+# tell, so they stay and are listed
+while IFS= read -r b; do
+  [ -n "$b" ] || continue
+  echo "  keep    ${b#"$DEST"/}   (an older .wav install.sh replaced: delete it if you don't need it)"; kept=$((kept + 1))
+done < <(find "$DEST/sounds" -maxdepth 1 -type f -name '*.wav.bak-[0-9]*' 2>/dev/null | sort)
 [ "$DRY" = 1 ] || rmdir "$DEST/sounds" 2>/dev/null || true
 
 if [ "$DRY" = 1 ]; then

@@ -24,10 +24,15 @@
 # only the variables a Mac app gets from the system, plus your locale and PATH.
 set -euo pipefail
 NEW="$HOME/.local/kitty.app/bin/kitty"; [ -x "$NEW" ] || NEW="$(command -v kitty || true)"
-# macOS: kitty.app isn't on PATH outside kitty's own tabs
-for app in /Applications "$HOME/Applications"; do
-  [ -n "$NEW" ] || { [ -x "$app/kitty.app/Contents/MacOS/kitty" ] && NEW="$app/kitty.app/Contents/MacOS/kitty"; } || true
-done
+# The detached copy (below) starts the kitty this run found (_KR_NEW): in its cleaner environment
+# PATH or NL_APP_DIRS may point elsewhere
+if [ -n "${_KR_NEW:-}" ] && [[ "${_KR_DETACHED:-}" =~ ^[0-9-]+$ ]]; then NEW="$_KR_NEW"; fi
+unset _KR_NEW
+# macOS: kitty.app isn't on PATH outside kitty's own tabs. NL_APP_DIRS: where to look, folders
+# separated by ":" (default /Applications:~/Applications; the tests point it at a temp folder)
+while IFS= read -r app; do
+  [ -n "$NEW" ] || { [ -n "$app" ] && [ -x "$app/kitty.app/Contents/MacOS/kitty" ] && NEW="$app/kitty.app/Contents/MacOS/kitty"; } || true
+done <<< "$(tr ':' '\n' <<< "${NL_APP_DIRS:-/Applications:$HOME/Applications}")"
 [ -n "$NEW" ] || { echo "kitty not found (not on PATH, not in ~/.local/kitty.app or kitty.app)" >&2; exit 1; }
 # The kitten that ships with that kitty: the session runs it for folders with a $ in their name,
 # and kitten may not be on PATH (readlink -f: macOS 12.3 and newer; python3 for older ones)
@@ -128,6 +133,9 @@ if [ $detached != 1 ] && [ "$MODE" != --dry-run ] && [ "$MODE" != --status ]; th
     MGR_KEYS="$(printf '%s\n' HOME USER LOGNAME SHELL PATH TMPDIR LANG SSH_AUTH_SOCK __CF_USER_TEXT_ENCODING \
       __CFBundleIdentifier COMMAND_MODE SECURITYSESSIONID XPC_FLAGS XPC_SERVICE_NAME LaunchInstanceID; compgen -e | grep '^LC_' || true)"
   fi
+  # Which config folder kitty reads stays as it was: a kitty started with its own config folder
+  # would otherwise come back with the default one
+  [ -z "$MGR_KEYS" ] || MGR_KEYS="$MGR_KEYS"$'\n'"KITTY_CONFIG_DIRECTORY"$'\n'"XDG_CONFIG_HOME"
   if [ -n "$MGR_KEYS" ] && [ -z "${NL_KITTY_SOCKET:-}" ]; then
     for v in $(compgen -e); do grep -qxF "$v" <<< "$MGR_KEYS" || unset "$v" 2>/dev/null || true; done
   fi
@@ -135,10 +143,10 @@ if [ $detached != 1 ] && [ "$MODE" != --dry-run ] && [ "$MODE" != --status ]; th
   # reject; macOS 15's prints digits)
   run_id="$$-$RANDOM-$(date +%s%N | tr -cd '0-9')"; : > "$MARK_DIR/kitty-relaunch-$run_id.run"
   if command -v setsid >/dev/null; then
-    _KR_DETACHED="$run_id" _KR_SOCK="$SOCK" _KR_CACHE="$CACHE" setsid nohup bash "$0" "$@" >>"$LOG" 2>&1 < /dev/null &
+    _KR_DETACHED="$run_id" _KR_SOCK="$SOCK" _KR_CACHE="$CACHE" _KR_NEW="$NEW" setsid nohup bash "$0" "$@" >>"$LOG" 2>&1 < /dev/null &
   else
-    _KR_DETACHED="$run_id" _KR_SOCK="$SOCK" _KR_CACHE="$CACHE" python3 -c "$DETACH_PY" \
-      "$(compgen -e | tr '\n' ' ') _KR_DETACHED _KR_SOCK _KR_CACHE" nohup bash "$0" "$@" >>"$LOG" 2>&1 < /dev/null &
+    _KR_DETACHED="$run_id" _KR_SOCK="$SOCK" _KR_CACHE="$CACHE" _KR_NEW="$NEW" python3 -c "$DETACH_PY" \
+      "$(compgen -e | tr '\n' ' ') _KR_DETACHED _KR_SOCK _KR_CACHE _KR_NEW" nohup bash "$0" "$@" >>"$LOG" 2>&1 < /dev/null &
   fi
   echo "Reload running in the background (log: $LOG). The kitty window will close and reopen."
   exit 0

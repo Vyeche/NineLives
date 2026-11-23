@@ -131,7 +131,10 @@ window there. So **a running kitty on a Mac is untested**: its socket appearing 
 sidebar drawing and its marks, the tab search and Ctrl+Alt+U over that socket, and the restart
 (`kitty-relaunch.sh` as a whole). `bash scripts/check-macos.sh` on your own Mac does that part too
 (it starts a kitty window of its own, checks the socket, the `✳` mark and a restart, then closes it):
-**please run it and post the output** in an issue. Also not checked anywhere yet: hearing a sound,
+**please run it and post the output** in an issue. Look at its last lines first: it says
+"All macOS checks passed, the real kitty's included" only when that part ran; "the real-kitty checks
+were skipped" means kitty couldn't open a window (no OpenGL), so the sidebar, socket and restart
+weren't checked. Also not checked anywhere yet: hearing a sound,
 seeing a notification, the look of the sidebar on a Mac's screen (Retina, fonts), dragging tabs
 (kitty's own drag on macOS), and daily use.
 

@@ -58,7 +58,10 @@ on a Mac with a display, starts the real kitty with NineLives' config: its socke
 `kitty-tabs.py sockets` and `kitty-pid`, the `✳` mark in `sidebar.txt`, and a restart that brings both
 tabs back. **On the Gauntlet that last part never runs:** GitHub's macOS runners have no OpenGL 3.3
 (kitty asks for a hardware renderer: "NSGL: Failed to find a suitable pixel format"), so it is skipped
-with a warning, and a running kitty on a Mac is untested until someone runs this on a real Mac. It opens a kitty window of its own and restarts it, sends one test notification and plays
+with a warning, and a running kitty on a Mac is untested until someone runs this on a real Mac.
+Only that no-OpenGL case is a skip: kitty exiting before its socket for any other reason is a failure.
+Read the last lines before counting the real-kitty checks as passed: "All macOS checks passed, the
+real kitty's included" means they ran; "the REAL-KITTY CHECKS WERE SKIPPED" means they didn't. It opens a kitty window of its own and restarts it, sends one test notification and plays
 one near-silent sound (your kitty config is left alone). A CI machine is not a Mac on a desk: hearing
 the sounds, seeing notifications, the look on a Mac's screen and dragging tabs are untested, and
 nobody has run NineLives on a real Mac yet.

@@ -1,6 +1,7 @@
 # Troubleshooting
 
-**First step for anything:** `bash scripts/check.sh` runs every check on the repository, and
+**First step for anything:** `bash scripts/check.sh` runs every check on the repository (on a Mac:
+`bash scripts/check-macos.sh`), and
 `bash scripts/install.sh` ends with kitty's own config check (`Config check found problems` names the setting).
 
 ### --when-idle never restarts
@@ -12,7 +13,9 @@ command. Answer or finish those, or restart now without `--when-idle`.
 ### The restart says "no kitty to restart" or "several kitty windows"
 - **No kitty to restart:** no kitty has a remote-control socket that answers. NineLives' `kitty.conf`
   gives every kitty one, but only from its next start: close kitty and open it again once after
-  installing. Also check that `$XDG_RUNTIME_DIR` is set (`echo $XDG_RUNTIME_DIR`): the socket lives there.
+  installing. On Linux, also check that `$XDG_RUNTIME_DIR` is set (`echo $XDG_RUNTIME_DIR`): the socket
+  lives there. On a Mac it is in your temp folder instead: `ls "$TMPDIR"ninelives-kitty-*` (one
+  `ninelives-kitty-<pid>` per kitty; quit kitty with ⌘Q and open it again if there is none).
 - **Several kitty windows:** more than one kitty has a socket and the script was run from outside
   them. Run it from a tab of the kitty you want to restart.
 

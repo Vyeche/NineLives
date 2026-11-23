@@ -924,13 +924,24 @@ class MacOS(TabBarCase):
 
     def test_sounds_play_the_wav_with_afplay_at_the_linux_level(self):
         self.tb._play("blocked")
-        self.assertEqual(self.afplays(), [["afplay", "-v", "0.2274", self.kitty_path("sounds/needs-you.wav")]])
+        self.assertEqual(self.afplays(), [["afplay", "-v", "0.22737368", self.kitty_path("sounds/needs-you.wav")]])
         self.assertFalse([c for c in self.played.call_args_list if c.args[0][0] == "paplay"])
         with open(self.tb.VOLUME_FILE, "w") as f:
             f.write("50")
         self.tb._last_sound.update(at=-99.0, priority=-1)
         self.tb._play("remind")                      # 28000 * 50% = 14000 on paplay's scale
-        self.assertEqual(self.afplays()[-1][2], f"{(14000 / 65536) ** 3:.4f}")
+        self.assertEqual(self.afplays()[-1][2], "0.00974865")
+
+    def test_the_lowest_volume_is_quiet_not_silent(self):
+        # kitty-sounds volume 5: the reminder (28000 * 5% = 1400) once rounded to -v 0.0000
+        with open(self.tb.VOLUME_FILE, "w") as f:
+            f.write("5")
+        for kind in ("done", "remind"):
+            self.tb._last_sound.update(at=-99.0, priority=-1)
+            self.tb._play(kind)
+            gain = float(self.afplays()[-1][2])
+            self.assertGreater(gain, 0, self.afplays()[-1])
+        self.assertEqual([a[2] for a in self.afplays()], ["0.00002842", "0.00000975"])
 
     def test_without_the_wav_it_uses_macos_own_sound(self):
         os.remove(self.kitty_path("sounds/error.wav"))

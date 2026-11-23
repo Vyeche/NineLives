@@ -41,7 +41,7 @@ if command -v kitty >/dev/null; then
   elif [ "$rc" = 0 ] && grep -q "Config check: OK" <<< "$out"; then
     ok "installs into a temp folder; kitty's config check passes"
   else fail "install: $(tail -3 <<< "$out")"; fi
-  n="$(find config -type f ! -path '*/__pycache__/*' | wc -l)"; m="$(find "$TMP/inst" -type f ! -name '*.bak-*' | wc -l)"
+  n="$(find config -type f ! -path '*/__pycache__/*' | wc -l)"; m="$(find "$TMP/inst" -type f ! -name '*.bak-*' ! -name '*.wav' | wc -l)"   # (.wav: made on macOS)
   [ "$n" = "$m" ] && ok "every config file installed ($n, sounds included)" || fail "installed $m of $n files"
 else skip "kitty not found"; fi
 

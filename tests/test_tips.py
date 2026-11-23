@@ -106,7 +106,7 @@ class Sounds(TipsCase):
         self.assertEqual([os.path.basename(p[-1]) for p in played],
                          [n + ext for n in ("done", "done-2", "needs-you", "error", "badge", "rank", "drop")])
         if self.mac:      # afplay: a plain gain, paplay's 20000 of 65536 cubed (the same level)
-            self.assertTrue(all(p[:3] == ["afplay", "-v", "0.0284"] for p in played), played)
+            self.assertTrue(all(p[:3] == ["afplay", "-v", "0.02842171"] for p in played), played)
         else:
             self.assertTrue(all(p[:2] == ["paplay", "--volume=20000"] for p in played), played)
 
@@ -119,7 +119,12 @@ class MacSounds(TipsCase):
         self.sh("sleep() { :; }; kitty-sounds volume 100 >/dev/null; kitty-sounds")
         played = self.played()
         self.assertEqual(len(played), 7, played)
-        self.assertTrue(all(p[:3] == ["afplay", "-v", "0.2274"] and p[3].endswith(".wav") for p in played), played)
+        self.assertTrue(all(p[:3] == ["afplay", "-v", "0.22737368"] and p[3].endswith(".wav") for p in played), played)
+
+    def test_the_lowest_volume_is_quiet_not_silent(self):
+        self.sh("sleep() { :; }; kitty-sounds volume 5 >/dev/null; kitty-sounds")
+        played = self.played()
+        self.assertTrue(played and all(p[:3] == ["afplay", "-v", "0.00002842"] for p in played), played)
 
     def test_a_mac_tip_only_on_a_mac(self):
         self.assertIn("On a Mac, Alt is Option", self.sh("kitty-tips all"))

@@ -7,6 +7,8 @@
 #   bash scripts/install.sh --dry-run  only show what would change
 # Another target folder: KITTY_CONFIG_DIRECTORY=/path bash scripts/install.sh
 # Keep more or fewer backups: NL_KEEP_BACKUPS=5 (or all) bash scripts/install.sh
+# Where to look for kitty.app when kitty isn't on PATH (macOS): NL_APP_DIRS, folders separated by
+# ":" (default /Applications:~/Applications; the tests point it at a temp folder)
 # macOS (new, not yet tried on a real Mac): it also makes a .wav of each sound (macOS's afplay can't
 # play .oga), with scripts/make-sounds.py; and finds kitty in kitty.app when it isn't on PATH.
 set -euo pipefail
@@ -42,9 +44,9 @@ prune() {  # prune DEST-FILE [PENDING]: delete its own backups (<file>.bak-YYYYM
 }
 
 KITTY="$(command -v kitty || true)"
-for app in /Applications "$HOME/Applications"; do     # macOS: kitty.app isn't on PATH outside kitty
-  [ -n "$KITTY" ] || { [ -x "$app/kitty.app/Contents/MacOS/kitty" ] && KITTY="$app/kitty.app/Contents/MacOS/kitty"; } || true
-done
+while IFS= read -r app; do                     # macOS: kitty.app isn't on PATH outside kitty
+  [ -n "$KITTY" ] || { [ -n "$app" ] && [ -x "$app/kitty.app/Contents/MacOS/kitty" ] && KITTY="$app/kitty.app/Contents/MacOS/kitty"; } || true
+done <<< "$(tr ':' '\n' <<< "${NL_APP_DIRS:-/Applications:$HOME/Applications}")"
 # (the version compared with awk: macOS's older sort has no -V)
 if [ -n "$KITTY" ] && ver="$("$KITTY" --version 2>/dev/null | awk '{print $2}')" && [ -n "$ver" ]; then
   if ! awk -v v="$ver" 'BEGIN { split(v, a, "."); exit !(a[1] + 0 > 0 || a[2] + 0 >= 50) }'; then
@@ -79,16 +81,23 @@ while IFS= read -r f; do          # every file, sounds/ included (not __pycache_
 done < <(find "$SRC" -type f ! -path '*/__pycache__/*' ! -name '*.pyc' | sort)
 
 # macOS: older ones can't play .oga (macOS 15 can), so every sound also gets a .wav, made from scratch by
-# make-sounds.py (no backup: it is NineLives' own, made the same way every time)
+# make-sounds.py; a different one already there is backed up and pruned like any other file
 if [ "$(uname -s)" = Darwin ]; then
   WAVS="$(mktemp -d)"; trap 'rm -rf "$WAVS"' EXIT
   if python3 "$REPO/scripts/make-sounds.py" --wav "$WAVS" >/dev/null; then
     for f in "$WAVS"/*.wav; do
       name="sounds/$(basename "$f")"; dest="$DEST/$name"
-      if [ -e "$dest" ] && cmp -s "$f" "$dest"; then echo "  same    $name"; continue; fi
+      if [ -e "$dest" ] && cmp -s "$f" "$dest"; then echo "  same    $name"; prune "$dest"; continue; fi
       changed=$((changed + 1))
-      if [ -e "$dest" ]; then echo "  update  $name"; else echo "  new     $name   (for macOS's afplay)"; fi
+      pending=0
+      if [ -e "$dest" ]; then
+        echo "  update  $name   (old one saved as $name.bak-$STAMP)"
+        if [ "$DRY" = 1 ]; then pending=1; else cp -p "$dest" "$dest.bak-$STAMP"; fi
+      else
+        echo "  new     $name   (for macOS's afplay)"
+      fi
       [ "$DRY" = 1 ] || { mkdir -p "$DEST/sounds"; cp "$f" "$dest"; }
+      prune "$dest" "$pending"
     done
   else
     echo "Warning: couldn't make the .wav sounds macOS plays (python3 scripts/make-sounds.py --wav); the tabs will use macOS's own sounds." >&2

@@ -133,12 +133,11 @@ K="$TMP/real"; mkdir -p "$K/state" "$K/cache"
 KITTY_CONFIG_DIRECTORY="$K/conf" bash scripts/install.sh >/dev/null 2>&1
 touch "$K/conf/sounds-off"
 mkdir -p "$K/work/code/webapp"; ln -s "$(command -v sleep)" "$K/work/claude"
-KENV="KITTY_CONFIG_DIRECTORY=$K/conf NINELIVES_STATE=$K/state NINELIVES_QUIET=1 XDG_CACHE_HOME=$K/cache"
+KENV=(KITTY_CONFIG_DIRECTORY="$K/conf" NINELIVES_STATE="$K/state" NINELIVES_QUIET=1 XDG_CACHE_HOME="$K/cache")
 # (kitty is this script's child: once it exits it stays a zombie until reaped, and kill -0 still works)
 alive() { ps -o stat= -p "$1" 2>/dev/null | grep -q '^[^Z]'; }
-# (env, not a shell function: env execs kitty, so $! is kitty's pid. $KENV holds no spaces: $TMPDIR has none)
-# shellcheck disable=SC2086
-env $KENV "$KDIR/kitty" --directory "$K/work/code/webapp" >"$K/kitty.log" 2>&1 &
+# (env, not a shell function: env execs kitty, so $! is kitty's pid)
+env "${KENV[@]}" "$KDIR/kitty" --directory "$K/work/code/webapp" >"$K/kitty.log" 2>&1 &
 KPID=$!; KPIDS="$KPID"
 S="${TMPDIR:-/tmp}"; S="${S%/}/ninelives-kitty-$KPID"
 for _ in $(seq 1 60); do [ -S "$S" ] && break; alive "$KPID" || break; sleep 0.5; done
@@ -146,10 +145,12 @@ if ! [ -S "$S" ] && alive "$KPID"; then
   fail "kitty runs but has no socket at $S (there: $(cd "${S%/*}" && echo ninelives-kitty-*))"
   sed 's/^/        /' "$K/kitty.log" | tail -15
 elif ! [ -S "$S" ]; then
+  # only "no OpenGL" (GitHub's macOS runners) is a known reason to skip; any other exit is a failure
   if grep -qiE "suitable pixel format|OpenGL" "$K/kitty.log"; then
+    SKIPPED_KITTY=1
     warn "kitty can't open a window here: no OpenGL 3.3 (as on GitHub's macOS runners). NOT CHECKED: kitty's"
     note "socket, kitty @ ls, the sidebar's agent mark and the restart. Run this on a Mac with a display."
-  else warn "kitty didn't start here (it exited; its log is below): the real-kitty checks did not run"; fi
+  else fail "kitty exited before making its socket (its log is below): the real-kitty checks did not run"; fi
   sed 's/^/        /' "$K/kitty.log" | tail -15
 else
   SOCK="unix:$S"
@@ -174,8 +175,7 @@ else
     || fail "agent mark in the sidebar: '${mark:-no sidebar.txt}'"
   # kitty-relaunch.sh on it: detached with python3 (no setsid), kitty's pid from ps, a new kitty on
   # the same socket with both tabs back
-  # shellcheck disable=SC2086
-  out="$(env $KENV NL_KITTY_SOCKET="$SOCK" bash scripts/kitty-relaunch.sh 2>&1)"
+  out="$(env "${KENV[@]}" NL_KITTY_SOCKET="$SOCK" bash scripts/kitty-relaunch.sh 2>&1)"
   log="$K/cache/ninelives/kitty-relaunch.log"
   for _ in $(seq 1 60); do grep -qE "done: |FAILED" "$log" 2>/dev/null && break; sleep 0.5; done
   if grep -q "done: " "$log" 2>/dev/null && [ "$(ntabs 2>/dev/null)" = 2 ]; then
@@ -193,4 +193,8 @@ else
 fi
 
 echo
-if [ "$fails" = 0 ]; then echo "All macOS checks passed."; else echo "$fails macOS check(s) failed."; exit 1; fi
+if [ "$fails" != 0 ]; then echo "$fails macOS check(s) failed."; exit 1; fi
+if [ -n "${SKIPPED_KITTY:-}" ]; then
+  echo "All macOS checks that ran passed, but the REAL-KITTY CHECKS WERE SKIPPED (no OpenGL here): kitty's"
+  echo "socket, the sidebar and the restart are not checked by this run."
+else echo "All macOS checks passed, the real kitty's included."; fi

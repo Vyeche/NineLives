@@ -43,7 +43,7 @@ _nl_state="${NINELIVES_STATE:-$HOME/.local/state/ninelives}"
 _nl_mac=""; case "${OSTYPE:-}" in darwin*) _nl_mac=1;; esac
 [ -n "$_nl_mac" ] && _kitty_tips+=("On a Mac, Alt is Option in kitty's shortcuts: Ctrl+Option+→ splits, Option+1 goes to tab 1")
 _nl_play() {  # _nl_play VOLUME FILE: VOLUME on paplay's scale (65536 = full); afplay's is that cubed
-  if [ -n "$_nl_mac" ]; then afplay -v "$(awk -v v="$1" 'BEGIN { printf "%.4f", (v / 65536) ^ 3 }')" "$2" 2>/dev/null
+  if [ -n "$_nl_mac" ]; then afplay -v "$(awk -v v="$1" 'BEGIN { printf "%.8f", (v / 65536) ^ 3 }')" "$2" 2>/dev/null
   else paplay --volume="$1" "$2" 2>/dev/null; fi
 }
 _nl_conf="${KITTY_CONFIG_DIRECTORY:-${XDG_CONFIG_HOME:-$HOME/.config}/kitty}"   # this kitty's config folder (switch files live here)

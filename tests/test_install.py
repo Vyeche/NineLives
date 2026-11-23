@@ -180,6 +180,27 @@ class MacSounds(unittest.TestCase):
         self.assertEqual(self.wavs(), ["drop.wav"])
         self.assertFalse(os.path.exists(os.path.join(self.dest, "ninelives-macos.conf")))
 
+    def test_a_different_wav_is_backed_up_and_pruned_like_any_file(self):
+        self.run_script(INSTALL)
+        done = os.path.join(self.dest, "sounds", "done.wav")
+        for day in range(10, 16):                          # 6 backups from older updates
+            open(f"{done}.bak-202611{day:02d}-120000", "w").close()
+        with open(done, "ab") as f:
+            f.write(b"older")                              # an older build, or yours
+        before = sorted(os.listdir(os.path.join(self.dest, "sounds")))
+        out = self.run_script(INSTALL, "--dry-run")
+        self.assertIn("update  sounds/done.wav   (old one saved as sounds/done.wav.bak-", out)
+        self.assertIn("prune   sounds/done.wav.bak-20261111-120000", out)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.dest, "sounds"))), before)   # dry run
+        self.run_script(INSTALL)
+        baks = sorted(n for n in os.listdir(os.path.join(self.dest, "sounds")) if n.startswith("done.wav.bak-"))
+        self.assertEqual(len(baks), 4)                     # the newest 3 (the new one too) and the oldest
+        self.assertEqual(baks[0], "done.wav.bak-20261110-120000")
+        with open(os.path.join(self.dest, "sounds", baks[-1]), "rb") as f:
+            self.assertTrue(f.read().endswith(b"older"))   # what was there is kept
+        out = self.run_script(UNINSTALL)
+        self.assertIn("keep    sounds/done.wav.bak-", out)    # can't tell whose: kept, and listed
+
     def test_linux_gets_no_wav(self):
         e = dict(os.environ, KITTY_CONFIG_DIRECTORY=self.dest)
         if subprocess.run(["uname", "-s"], capture_output=True, text=True).stdout.strip() == "Darwin":
@@ -193,7 +214,7 @@ class KittyAppBundle(unittest.TestCase):
     """On a Mac kitty is often only in kitty.app, not on PATH: install.sh finds it there for its
     version and config check (a stub kitty.app here, and a PATH without kitty)."""
     TOOLS = ("bash", "dirname", "date", "find", "grep", "sort", "sed", "tail", "cmp", "cp", "mkdir",
-             "awk", "basename", "rm", "cut", "head", "uname", "wc", "cat", "python3", "mktemp")
+             "awk", "basename", "rm", "cut", "head", "uname", "wc", "cat", "python3", "mktemp", "tr")
 
     def test_finds_kitty_in_applications(self):
         import shutil
@@ -211,7 +232,9 @@ class KittyAppBundle(unittest.TestCase):
                 f.write(f'#!/bin/sh\necho "$1" >> "{log}"\n[ "$1" = --version ] && echo "kitty 0.51.0 created by Kovid Goyal"\nexit 0\n')
             os.chmod(os.path.join(app, "kitty"), 0o755)
             e = {"PATH": os.path.join(t, "path"), "HOME": os.path.join(t, "home"),
-                 "KITTY_CONFIG_DIRECTORY": os.path.join(t, "kitty")}
+                 "KITTY_CONFIG_DIRECTORY": os.path.join(t, "kitty"),
+                 # only this folder: never the real /Applications or ~/Applications
+                 "NL_APP_DIRS": os.path.join(t, "nowhere") + ":" + os.path.join(t, "home", "Applications")}
             r = subprocess.run(["bash", INSTALL], env=e, capture_output=True, text=True, timeout=120)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertIn("Config check: OK", r.stdout)
@@ -304,8 +327,18 @@ class MacMuteKey(unittest.TestCase):
         self.press()
         self.assertFalse(os.path.exists(os.path.join(self.conf, "sounds-off")))
         with open(self.log) as f:
-            self.assertEqual(f.read().split(), ["-v", f"{(20000 / 65536) ** 3:.4f}",
-                                                os.path.join(self.conf, "sounds", "done.wav")])
+            self.assertEqual(f.read().split(), ["-v", "0.02842171", os.path.join(self.conf, "sounds", "done.wav")])
+
+    def test_the_lowest_volume_is_quiet_not_silent(self):
+        open(os.path.join(self.conf, "sounds", "done.wav"), "w").close()
+        open(os.path.join(self.conf, "sounds-off"), "w").close()
+        for v, gain in (("5", "0.00002842"), ("100", "0.22737368")):
+            with open(os.path.join(self.conf, "sounds-volume"), "w") as f:
+                f.write(v + "\n")
+            self.press()                                  # unmute: plays the chime
+            with open(self.log) as f:
+                self.assertEqual(f.read().split()[-2], gain)
+            self.press()                                  # mute again
 
 
 if __name__ == "__main__":
