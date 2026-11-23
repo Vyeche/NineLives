@@ -102,14 +102,24 @@ the result before committing, and keep each GIF small (they are
 50–200 KB). Like the test kitty, it uses the hidden display only, so run it when no one else
 (`check.sh` included) is using the test kitty.
 
+## The YouTube Short
+`tools/short/` makes the vertical Short the same way: `capture.sh` records two takes from the hidden
+test kitty (real shortcuts pressed with `scripts/xkey.py`, states written to the fake agents, the
+restart through `test-kitty.sh relaunch`) with a meta file of captions and event times, and
+`compose_short.py` puts them together with the sounds the stubs logged, over a music bed
+(`music.py`) synthesized with the same timbres as the sounds. See
+[tools/short/README.md](https://github.com/Vyeche/NineLives/blob/main/tools/short/README.md).
+
 **Checks before committing a tab_bar.py change** (beyond `check.sh`)
 - A screenshot in both themes.
 - The reload path: start with the old file, copy the new one in, `kitty @ load-config`. There should be no errors in the kitty log, and sounds should not play twice.
 - An idle window should stop redrawing.
 
-## Clicking the hidden test kitty
+## Clicking and typing on the hidden test kitty
 `scripts/xclick.py :97 X Y [button]` clicks at a pixel on the hidden test kitty's display (X11 XTest),
 so your real pointer never moves. `check.sh` uses it to click the `⋯ hidden:` line of a short window.
+`scripts/xkey.py :97 ctrl+alt+u` presses keys there the same way (`--type TEXT` types), so a recording
+can use the real shortcuts.
 
 ## A virtual mouse
 `scripts/vmouse.py` (needs python-evdev and write access to `/dev/uinput`) drives a real kitty window,
