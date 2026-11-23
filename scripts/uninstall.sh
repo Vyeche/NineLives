@@ -5,8 +5,9 @@
 #     history) is removed; one you changed is kept and listed;
 #   - backups that are NineLives versions are removed; the oldest other backup of a file (your own
 #     file from before NineLives) is put back in its place; any other backups are kept.
+# On macOS, the .wav sounds install.sh made go too, unless you changed them.
 # Your switches (sounds-off, …), quest progress (~/.local/state/ninelives), the restart's cache
-# (~/.cache/ninelives) and the tips line in ~/.bashrc stay; it says where they are.
+# (~/.cache/ninelives) and the tips line in ~/.bashrc (or ~/.zshrc) stay; it says where they are.
 #   bash scripts/uninstall.sh --dry-run   only show what would happen
 #   bash scripts/uninstall.sh             uninstall
 # Another folder: KITTY_CONFIG_DIRECTORY=/path bash scripts/uninstall.sh
@@ -57,6 +58,28 @@ while IFS= read -r f; do
     fi
   fi
 done < <(find "$SRC" -type f ! -path '*/__pycache__/*' ! -name '*.pyc' | sort)
+# macOS: the .wav of each sound that install.sh made (older macOS can't play .oga). One is ours if it is
+# what make-sounds.py makes now; one you changed is kept.
+wavs=""
+for f in "$SRC"/sounds/*.oga; do
+  w="$DEST/sounds/$(basename "$f" .oga).wav"
+  if [ -e "$w" ]; then wavs="$wavs$w"$'\n'; fi
+done
+if [ -n "$wavs" ]; then
+  WAVS="$(mktemp -d)"; trap 'rm -rf "$WAVS"' EXIT
+  python3 "$REPO/scripts/make-sounds.py" --wav "$WAVS" >/dev/null 2>&1 || true
+  while IFS= read -r w; do
+    [ -n "$w" ] || continue
+    if cmp -s "$WAVS/$(basename "$w")" "$w"; then act "remove  sounds/$(basename "$w")" rm -f -- "$w"; removed=$((removed + 1))
+    else echo "  keep    sounds/$(basename "$w")   (changed since it was installed: yours now)"; kept=$((kept + 1)); fi
+  done <<< "$wavs"
+fi
+# their backups (an update made with other sounds): NineLives' own most likely, but nothing here can
+# tell, so they stay and are listed
+while IFS= read -r b; do
+  [ -n "$b" ] || continue
+  echo "  keep    ${b#"$DEST"/}   (an older .wav install.sh replaced: delete it if you don't need it)"; kept=$((kept + 1))
+done < <(find "$DEST/sounds" -maxdepth 1 -type f -name '*.wav.bak-[0-9]*' 2>/dev/null | sort)
 [ "$DRY" = 1 ] || rmdir "$DEST/sounds" 2>/dev/null || true
 
 if [ "$DRY" = 1 ]; then
@@ -68,5 +91,5 @@ echo "Left alone (delete them if you like):"
 echo "  switches in $DEST (sounds-off, sounds-volume, sounds-classic, cat-off, quests-off, tips-off, buttons-off)"
 echo "  quest progress: ${NINELIVES_STATE:-$HOME/.local/state/ninelives}"
 echo "  restart log and session: ${XDG_CACHE_HOME:-$HOME/.cache}/ninelives"
-echo "  the tips.sh line in ~/.bashrc (harmless once tips.sh is gone)"
+echo "  the tips.sh line in ~/.bashrc or ~/.zshrc (harmless once tips.sh is gone)"
 echo "Restart kitty to finish (the running one keeps the old sidebar until it closes)."

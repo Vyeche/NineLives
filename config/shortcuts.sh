@@ -23,7 +23,7 @@ if [ ! -e "$CONF/quests-off" ]; then
     [[ $n =~ ^[0-9]+$ ]] && ((n >= 10)) && MASTERED+="$q "; done < "$STATE/uses"
 fi
 # the count and total as kitty-quests shows them (tab_bar.py writes quests.txt: "… ★★·· 2/16 …")
-PROGRESS="$(head -1 "$STATE/quests.txt" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+/[0-9]+' | head -1)"
+PROGRESS="$(head -1 "$STATE/quests.txt" 2>/dev/null | sed $'s/\e\\[[0-9;]*m//g' | grep -oE '[0-9]+/[0-9]+' | head -1)"
 [ -n "$PROGRESS" ] || PROGRESS="$(wc -w <<< "$EARNED" | tr -d ' ') so far"
 mark() {  # mark QUEST-ID: the 2-cell marker in front of a shortcut
   if [ -z "${QUESTS:-}" ] || [ -z "${1:-}" ]; then printf '  '
@@ -100,6 +100,11 @@ k "kitten icat pic.png"     "Show an image right in the terminal"
 k "kitten diff a b"         "Side-by-side diff of two files or folders"
 k "kitten themes"           "Browse and try color themes"
 k "kitten ssh host"         "SSH that keeps kitty features on the server"
-printf '\n'; fold -s -w $((W - 2)) <<< "Theme follows your desktop's light/dark setting. Long jobs (15 s+) in other tabs notify you when done." | while IFS= read -r line; do printf ' %s%s%s\n' "$D" "$line" "$R"; done
+FOOT="Theme follows your desktop's light/dark setting. Long jobs (15 s+) in other tabs notify you when done."
+# on a Mac: kitty reads Option as Alt in its shortcuts, and laptop F-keys need Fn
+case "${OSTYPE:-}" in darwin*) FOOT="$FOOT On a Mac, Alt is Option (Ctrl+Alt+→ = Ctrl+Option+→, Alt+1 = Option+1); F1 may need Fn: Ctrl+Shift+/ also opens this.";; esac
+printf '\n'; fold -s -w $((W - 2)) <<< "$FOOT" | while IFS= read -r line; do printf ' %s%s%s\n' "$D" "$line" "$R"; done
 }
-if [ -t 1 ]; then sheet | less -R --mouse --prompt='q closes' -+F; else sheet; fi
+# (an older less, as on some Macs, has no --mouse and would show nothing at all with it)
+MOUSE=--mouse; less --mouse -V >/dev/null 2>&1 || MOUSE=
+if [ -t 1 ]; then sheet | less -R $MOUSE --prompt='q closes' -+F; else sheet; fi

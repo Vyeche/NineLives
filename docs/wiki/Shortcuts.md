@@ -52,3 +52,10 @@ There, `★` marks a quest shortcut you haven't used yet and a green `✓` one y
 ## Kittens (type in any tab)
 `kitten icat pic.png` shows an image, `kitten diff a b` a side-by-side diff, `kitten themes` browses
 colour themes, `kitten ssh host` keeps kitty features over SSH.
+
+## On a Mac
+Not yet tried on a real Mac. kitty reads **Option as Alt** in its own shortcuts (whatever
+`macos_option_as_alt` is set to), so every Alt shortcut here is Option: **Ctrl+Option+→** splits,
+**Option+1** goes to tab 1, **Ctrl+Option+U** goes to the tab waiting for you. Function keys on a
+laptop may need **Fn** (Fn+F1), or use **Ctrl+Shift+/** for this sheet. The Ctrl+Shift shortcuts work
+as listed, and kitty's own ⌘ shortcuts (⌘T, ⌘W, ⌘C, ⌘V, …) keep working too.

@@ -12,11 +12,20 @@ raising, because kitty drops the whole title template on an exception.
 ## 2. A timer for status, sound and animation
 kitty only redraws the tab bar when something changes, and templates have no clock. A timer (`TICK`,
 8 times a second) does three things:
-- **Watches states.** It reads each window's program status (OSC 7501, sent by Claude Code), plus "is a command running" for plain shells (the terminal's foreground process).
+- **Watches states.** It reads each window's program status (OSC 7501, sent by Claude Code), plus "is a command running" for plain shells (the terminal's foreground process: from `/proc` on Linux, from kitty's own process helpers in `kitty.child` on macOS, which has no `/proc`).
 - **Plays sounds.** It does this on changes (working → done, → blocked, → error), and fires the 3-minute reminder.
 - **Redraws.** Only when a visible frame changes: spinner and pulse on every other tick, sparkles and waves on every tick, nothing when idle. It also wakes kitty's main loop, which otherwise may not paint (seen on X11 once the cursor stops blinking).
 
 Animations count ticks (`_frame`), not the clock, so no frame is skipped or shown twice.
+
+**Agent marks** (`✳`, `π`, …) name the program in each tab's foreground. When a shell or `kitten`
+leads the foreground process group (a tab the restart reopened), the agent below it in the same group
+counts: on Linux by reading the leader's children in `/proc`, on macOS from kitty's process-group map
+(one scan of all processes, shared by every tab for a second). Marks are kept 3 seconds.
+
+**macOS** (new, untested on a real Mac): `IS_MACOS` picks `afplay` and the `.wav` sounds,
+`osascript` notifications (the text as arguments, never in the script) and the process lookups above.
+The Linux code paths are unchanged.
 
 ## 3. Patches to kitty
 These are installed once per kitty process. Each checks that what it relies on exists, and skips itself
@@ -40,7 +49,8 @@ written atomically to `~/.local/state/ninelives/`.
 ## Other files
 | File | Does |
 | --- | --- |
-| `config/kitty.conf` | settings, key maps, theme include |
+| `config/kitty.conf` | settings, key maps, theme include; at the end `globinclude ninelives-${KITTY_OS}.conf` |
+| `config/ninelives-macos.conf` | read only by kitty on macOS: the socket in `$TMPDIR`, Ctrl+Alt+M with `afplay` |
 | `config/cosmic-*.conf`, `*-theme.auto.conf` | colours; kitty picks an auto file by the desktop's light/dark setting |
 | `config/shortcuts.sh` | the F1 sheet (wraps to the window) |
 | `config/tips.sh` | prompt tips and the `kitty-*` commands |
@@ -52,6 +62,7 @@ written atomically to `~/.local/state/ninelives/`.
 | `scripts/make-sounds.py` | builds the sounds from scratch |
 | `tests/` | unit tests, no kitty needed (see [Testing](Testing)) |
 | `scripts/check.sh` | every check in one command, see [Testing](Testing) |
+| `scripts/check-macos.sh`, `tests/live_agent_lookup.py` | the macOS checks (the Gauntlet's macOS lane), and the agent lookup against real processes with kitty's own Python |
 | `scripts/dev-kitty.sh` | a visible dev kitty with its own config folder, see [Testing](Testing) |
 | `scripts/test-kitty.sh`, `scripts/vmouse.py` | testing, see [Testing](Testing) |
 | `scripts/publish-wiki.sh` | publish `docs/wiki/` to the repository's wiki (GitHub, Gitea, …) |

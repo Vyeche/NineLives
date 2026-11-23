@@ -4,7 +4,7 @@
 
 ## Platform
 
-terminal (kitty 0.50+ on Linux; built on and tuned for Pop!_OS COSMIC, Wayland). Not web, iOS or Android: the "UI" is kitty's tab bar drawn by `config/tab_bar.py`, terminal cells, the palette colours of the theme, and small shell scripts.
+terminal (kitty 0.50+ on Linux; built on and tuned for Pop!_OS COSMIC, Wayland. macOS has its own code paths since 2026-11-23, checked by a CI runner but not yet used on a real Mac). Not web, iOS or Android: the "UI" is kitty's tab bar drawn by `config/tab_bar.py`, terminal cells, the palette colours of the theme, and small shell scripts.
 
 ## Users
 People who run many Claude Code / omp / opencode sessions at once, each as a tab in one kitty window (often opened by a launcher), and glance at the sidebar while doing other things. It was built for one person, its maintainer, who was still learning kitty and the terminal and wanted the setup to teach them as they go; it is now public.

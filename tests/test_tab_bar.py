@@ -133,6 +133,7 @@ class TabBarCase(unittest.TestCase):
         assert spec is not None and spec.loader is not None
         self.tb = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.tb)
+        self.tb.IS_MACOS = False        # the Linux paths, on any system (class MacOS tries the other)
         self.played.reset_mock()
         self.tb._last_sound.update(at=-99.0, priority=-1)
 
@@ -838,6 +839,7 @@ class Draw(TabBarCase):
         with mock.patch("os.tcgetpgrp", lambda fd: 42), self.procs(table):
             self.assertEqual(self.tb._foreground_name(w), "claude")
 
+    @unittest.skipUnless(os.path.isdir("/proc/self"), "no /proc here (macOS: MacOS covers that path)")
     def test_reads_the_real_proc(self):
         # this test's own process: its group, argv and the children of every thread
         import signal
@@ -870,6 +872,159 @@ class Draw(TabBarCase):
     def strip(s):
         import re
         return re.sub(r"<[^>]*>|\x1b\[[0-9;]*m", "", s)
+
+
+class MacOS(TabBarCase):
+    """The macOS paths (sys.platform darwin), tried on any system: afplay and the .wav sounds,
+    osascript notifications, and the agent marks from kitty's own process helpers instead of /proc.
+    (scripts/check-macos.sh runs the agent lookup against real processes on a Mac.)"""
+
+    def setUp(self):
+        super().setUp()
+        self.tb.IS_MACOS = True
+        for s in ("done", "done-2", "done-3", "needs-you", "error", "badge", "rank", "drop"):
+            open(self.kitty_path(os.path.join("sounds", s + ".wav")), "w").close()
+        self.system_sounds = os.path.join(self.tmp.name, "System-Sounds")
+        os.makedirs(self.system_sounds)
+        self.tb.MAC_SOUNDS = self.system_sounds
+        # kitty's own helpers (kitty.child), faked: pid -> argv, and process group -> pids
+        self.argv, self.group_of = {}, {}
+        self.map_calls = 0
+        child = types.ModuleType("kitty.child")
+
+        def cmdline_of_pid(pid):
+            if pid not in self.argv:
+                raise ProcessLookupError(pid)
+            return list(self.argv[pid])
+
+        def process_group_map():
+            self.map_calls += 1
+            groups = {}
+            for pid, pg in self.group_of.items():
+                groups.setdefault(pg, []).append(pid)
+            return groups
+        child.cmdline_of_pid, child.process_group_map = cmdline_of_pid, process_group_map
+        sys.modules["kitty.child"] = child          # (undone with the rest of the fake kitty)
+        self.no_proc = mock.patch("builtins.open", side_effect=self.refuse_proc)
+        self._open = open
+
+    def refuse_proc(self, path, *a, **k):
+        if str(path).startswith("/proc"):
+            raise AssertionError(f"read {path} on macOS")
+        return self._open(path, *a, **k)
+
+    def procs(self, table):
+        """pid -> (argv, process group)"""
+        self.argv = {p: v[0] for p, v in table.items()}
+        self.group_of = {p: v[1] for p, v in table.items()}
+        self.tb._groups.update(at=-99.0, map={})
+
+    def afplays(self):
+        return [c.args[0] for c in self.played.call_args_list if c.args[0][0] == "afplay"]
+
+    def test_sounds_play_the_wav_with_afplay_at_the_linux_level(self):
+        self.tb._play("blocked")
+        self.assertEqual(self.afplays(), [["afplay", "-v", "0.22737368", self.kitty_path("sounds/needs-you.wav")]])
+        self.assertFalse([c for c in self.played.call_args_list if c.args[0][0] == "paplay"])
+        with open(self.tb.VOLUME_FILE, "w") as f:
+            f.write("50")
+        self.tb._last_sound.update(at=-99.0, priority=-1)
+        self.tb._play("remind")                      # 28000 * 50% = 14000 on paplay's scale
+        self.assertEqual(self.afplays()[-1][2], "0.00974865")
+
+    def test_the_lowest_volume_is_quiet_not_silent(self):
+        # kitty-sounds volume 5: the reminder (28000 * 5% = 1400) once rounded to -v 0.0000
+        with open(self.tb.VOLUME_FILE, "w") as f:
+            f.write("5")
+        for kind in ("done", "remind"):
+            self.tb._last_sound.update(at=-99.0, priority=-1)
+            self.tb._play(kind)
+            gain = float(self.afplays()[-1][2])
+            self.assertGreater(gain, 0, self.afplays()[-1])
+        self.assertEqual([a[2] for a in self.afplays()], ["0.00002842", "0.00000975"])
+
+    def test_without_the_wav_it_uses_macos_own_sound(self):
+        os.remove(self.kitty_path("sounds/error.wav"))
+        self.assertEqual(self.tb._sound_file("error"), "")          # no Basso.aiff here either
+        open(os.path.join(self.system_sounds, "Basso.aiff"), "w").close()
+        self.assertEqual(self.tb._sound_file("error"), os.path.join(self.system_sounds, "Basso.aiff"))
+        self.assertEqual(self.tb._sound_file("drop"), self.kitty_path("sounds/drop.wav"))
+
+    def test_classic_means_macos_own_sounds(self):
+        open(self.tb.CLASSIC_FILE, "w").close()
+        for name in ("Glass.aiff", "Ping.aiff"):
+            open(os.path.join(self.system_sounds, name), "w").close()
+        self.assertEqual(self.tb._sound_file("done"), os.path.join(self.system_sounds, "Glass.aiff"))
+        self.assertEqual(self.tb._sound_file("blocked"), os.path.join(self.system_sounds, "Ping.aiff"))
+        self.assertEqual(self.tb._sound_file("drop"), "")
+
+    def test_notifications_pass_the_text_as_arguments(self):
+        title, body = 'Badge "x" \\ & end tell', "line one\n-two"
+        self.tb._notify(title, body)
+        cmd = [c.args[0] for c in self.played.call_args_list if c.args[0][0] == "osascript"][0]
+        self.assertEqual(cmd[-2:], [title, body])
+        script = [a for i, a in enumerate(cmd) if i and cmd[i - 1] == "-e"]
+        self.assertTrue(all(title not in a and body not in a for a in script), script)
+        self.assertEqual(self.tb._notify_cmd("-x", "y")[-2], " -x")     # never read as an option
+        self.played.reset_mock()
+        with mock.patch.dict(os.environ, {"NINELIVES_QUIET": "1"}):
+            self.tb._notify("t", "b")
+        self.assertFalse(self.played.called)
+
+    def test_an_agent_below_a_shell_is_found_without_proc(self):
+        w = types.SimpleNamespace(child=types.SimpleNamespace(child_fd=5))
+        self.procs({42: (["/Applications/kitty.app/Contents/MacOS/kitten", "run-shell", "bash", "-lc", "claude"], 42),
+                    43: (["/bin/bash", "-lc", "claude --resume x; echo"], 42),
+                    44: (["node", "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js"], 42),
+                    50: (["claude"], 50)})                      # another group: not this tab's
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.no_proc:
+            self.assertEqual(self.tb._foreground_name(w), "claude")
+        self.procs({42: (["-zsh"], 42), 50: (["claude"], 50)})  # a background job at the prompt
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.no_proc:
+            self.assertEqual(self.tb._foreground_name(w), "-zsh")
+        self.procs({42: (["omp", "--continue"], 42)})
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.no_proc:
+            self.assertEqual(self.tb._foreground_name(w), "omp")
+
+    def test_one_process_scan_serves_every_tab(self):
+        tabs = [FakeTab() for _ in range(6)]
+        for t in tabs:
+            t.windows[0].child = types.SimpleNamespace(child_fd=5)
+        self.window(*tabs)
+        self.procs({42: (["bash"], 42), 43: (["claude"], 42)})
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.no_proc:
+            self.assertEqual([self.tb._agent_mark(t.id) for t in tabs], ["✳"] * 6)
+        self.assertEqual(self.map_calls, 1)
+
+    def test_looking_below_is_bounded_and_survives_vanishing_processes(self):
+        w = types.SimpleNamespace(child=types.SimpleNamespace(child_fd=5))
+        table = {42: (["bash"], 42), 999: (["claude"], 42)}        # past the limit: not looked at
+        table.update({i: (["sleep", "1"], 42) for i in range(100, 160)})
+        self.procs(table)
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.no_proc:
+            self.assertEqual(self.tb._foreground_name(w), "bash")
+        self.procs({42: (["bash"], 42), 43: (["claude"], 42)})
+        del self.argv[43]                                          # exited meanwhile
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.no_proc:
+            self.assertEqual(self.tb._foreground_name(w), "bash")
+
+    def test_without_kitty_child_nothing_breaks(self):
+        del sys.modules["kitty.child"]
+        sys.modules["kitty.child"] = None                          # a kitty that renamed it
+        w = types.SimpleNamespace(child=types.SimpleNamespace(child_fd=5))
+        with mock.patch("os.tcgetpgrp", lambda fd: 42):
+            self.assertEqual(self.tb._foreground_name(w), "")
+
+    def test_plain_command_check_reads_one_argv_and_never_scans(self):
+        w = types.SimpleNamespace(child=types.SimpleNamespace(child_fd=5, pid=40),
+                                  screen=types.SimpleNamespace(is_main_linebuf=lambda: True))
+        self.procs({42: (["make", "-j8"], 42)})
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.no_proc:
+            self.assertTrue(self.tb._plain_command_running(w))
+        self.procs({42: (["/bin/zsh"], 42)})
+        with mock.patch("os.tcgetpgrp", lambda fd: 42), self.no_proc:
+            self.assertFalse(self.tb._plain_command_running(w))
+        self.assertEqual(self.map_calls, 0)
 
 
 class Quests(TabBarCase):

@@ -32,7 +32,9 @@ that fails without the fix.
 ## The Gauntlet
 Every pull request runs the **Gauntlet** (`.github/workflows/gauntlet.yml`) on a clean Ubuntu runner:
 actionlint over the workflows, `check.sh --quick`, then the full `check.sh` with a real kitty on a
-hidden display (screenshots and logs are kept as an artifact). Its `required` check sums them up. A
+hidden display (screenshots and logs are kept as an artifact), and `scripts/check-macos.sh` on a macOS
+runner with the official kitty for macOS. Its `required` check sums them up (the macOS lane isn't in
+it yet: it is new). A
 PR's code runs with a read-only token and no secrets. HOL Guard's repository scan runs on `main`
 (and weekly), not on pull requests. A PR is merged once the Gauntlet is green and the change has
 been reviewed.

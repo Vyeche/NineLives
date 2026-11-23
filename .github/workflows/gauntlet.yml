@@ -6,8 +6,14 @@
 #   kitty     all of the above plus a real kitty 0.51 on a hidden X display (Xvfb): status icons,
 #             sounds (stubbed), badges, Ctrl+Alt+U, sidebar buttons, short window, screenshot, and
 #             a restart that brings split tabs back                                     (~3 min)
-#   required  one summary check that fails if any of the above failed: make this the only required
-#             status check on main (Settings → Rules), so new lanes don't need a settings change
+#   macos     scripts/check-macos.sh on a macOS runner with the official kitty 0.51 .dmg, using
+#             what a Mac has out of the box (/bin/bash 3.2, /usr/bin/python3, zsh, BSD tools): unit
+#             tests, install/uninstall, afplay's formats, osascript, the agent lookup against real
+#             processes. Its last part (the real kitty: socket, sidebar mark, restart) is skipped
+#             with a warning: the runners have no OpenGL 3.3, so kitty can't open a window (~5 min)
+#   required  one summary check that fails if any lane it lists failed: make this the only required
+#             status check on main (Settings → Rules), so new lanes don't need a settings change.
+#             macos isn't in it yet (new; add it to `needs` below once it has passed a few runs)
 #   guard     HOL Guard's repository scan, attestation and public verification. Only on pushes to
 #             main, weekly (a verification lasts 7 days) and by hand: it needs write permissions
 #             a fork's pull request never gets, so PRs rely on the checks above.
@@ -36,6 +42,8 @@ env:
   KITTY_VERSION: "0.51.0"
   # SHA-256 of kitty-0.51.0-x86_64.txz from kitty's GitHub release; change both together
   KITTY_SHA256: "c285daaf1b699997614939c8d1cd92dd8b99302ff12f18efcc3f69382aa72b1d"
+  # SHA-256 of kitty-0.51.0.dmg (macOS) from the same release, as GitHub records it for the asset
+  KITTY_DMG_SHA256: "e7d51ec9f1978ff2fee61647b6f7eb59530e06d9bb1af876b00357ca7779638d"
   ACTIONLINT_VERSION: "1.7.12"
   # SHA-256 of actionlint_1.7.12_linux_amd64.tar.gz (matches the release's checksums.txt)
   ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
@@ -71,7 +79,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Tools (ffmpeg for the sound loudness check)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        run: bash scripts/ci-apt.sh --no-install-recommends ffmpeg
       - name: check.sh --quick
         run: bash scripts/check.sh --quick
 
@@ -90,8 +98,7 @@ jobs:
           python-version: "3.12"
       - name: Hidden display, software OpenGL, fonts, ffmpeg, XTest
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb ffmpeg fonts-dejavu-core libgl1 libegl1 libgl1-mesa-dri \
+          bash scripts/ci-apt.sh xvfb ffmpeg fonts-dejavu-core libgl1 libegl1 libgl1-mesa-dri \
             libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libxinerama1 libxtst6 libx11-xcb1 \
             libfontconfig1 libdbus-1-3 libwayland-client0
       - name: kitty ${{ env.KITTY_VERSION }} (the official build, checksum-pinned; apt's kitty is too old)
@@ -121,8 +128,35 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  macos:
+    needs: quick
+    runs-on: macos-15
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: kitty ${{ env.KITTY_VERSION }} for macOS (the official .dmg, checksum-pinned)
+        run: |
+          url="https://github.com/kovidgoyal/kitty/releases/download/v$KITTY_VERSION/kitty-$KITTY_VERSION.dmg"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/kitty.dmg" "$url"
+          echo "$KITTY_DMG_SHA256  $RUNNER_TEMP/kitty.dmg" | shasum -a 256 -c -
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/kitty-dmg" "$RUNNER_TEMP/kitty.dmg"
+          mkdir -p "$HOME/Applications"
+          cp -R "$RUNNER_TEMP/kitty-dmg/kitty.app" "$HOME/Applications/"
+          hdiutil detach "$RUNNER_TEMP/kitty-dmg"
+          ls "$HOME/Applications/kitty.app/Contents/MacOS"
+          "$HOME/Applications/kitty.app/Contents/MacOS/kitty" --version
+      - name: check-macos.sh (macOS's own /bin/bash 3.2, /usr/bin/python3, zsh and BSD tools)
+        run: |
+          /bin/bash --version | head -1
+          /bin/bash scripts/check-macos.sh "$HOME/Applications/kitty.app"
+
   required:
     if: always()
+    # to make the macOS lane required too: needs: [lint, quick, kitty, macos]
     needs: [lint, quick, kitty]
     runs-on: ubuntu-24.04
     timeout-minutes: 2

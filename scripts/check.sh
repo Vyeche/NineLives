@@ -3,7 +3,9 @@
 #   bash scripts/check.sh          everything (the last step needs Xvfb, ffmpeg and kitty)
 #   bash scripts/check.sh --quick  skip the test-kitty step
 # Steps: syntax · unit tests (tests/, no kitty needed) · install + kitty's config check · sound files
-# and loudness · wiki/README links · a hidden test kitty (no errors, the right sounds, a working cat).
+# and loudness · wiki/README links · tab_bar.py's process lookups against real processes (kitty's own
+# Python, both its Linux and its macOS branch) · a hidden test kitty (no errors, the right sounds, a
+# working cat). macOS: scripts/check-macos.sh.
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
@@ -19,7 +21,7 @@ skip() { printf '  \e[2mskip  %s\e[0m\n' "$1"; }
 echo "Syntax"
 if out="$(PYTHONDONTWRITEBYTECODE=1 python3 - <<'EOF' 2>&1
 import ast, sys
-for f in ("config/tab_bar.py", "scripts/make-sounds.py", "scripts/vmouse.py"):
+for f in ("config/tab_bar.py", "scripts/make-sounds.py", "scripts/vmouse.py", "tests/live_agent_lookup.py"):
     ast.parse(open(f, encoding="utf-8").read(), f)
 EOF
 )"; then ok "python parses"; else fail "python: $out"; fi
@@ -39,7 +41,7 @@ if command -v kitty >/dev/null; then
   elif [ "$rc" = 0 ] && grep -q "Config check: OK" <<< "$out"; then
     ok "installs into a temp folder; kitty's config check passes"
   else fail "install: $(tail -3 <<< "$out")"; fi
-  n="$(find config -type f ! -path '*/__pycache__/*' | wc -l)"; m="$(find "$TMP/inst" -type f ! -name '*.bak-*' | wc -l)"
+  n="$(find config -type f ! -path '*/__pycache__/*' | wc -l)"; m="$(find "$TMP/inst" -type f ! -name '*.bak-*' ! -name '*.wav' | wc -l)"   # (.wav: made on macOS)
   [ "$n" = "$m" ] && ok "every config file installed ($n, sounds included)" || fail "installed $m of $n files"
 else skip "kitty not found"; fi
 
@@ -73,6 +75,18 @@ for t in re.findall(r"\]\(((?:docs|config|scripts)/[^)#]+)", open("README.md", e
 print(" ".join(bad))
 EOF
 )" && [ -z "$out" ]; then ok "wiki and README links resolve"; else fail "broken links: $out"; fi
+
+echo "Live processes"
+if command -v kitty >/dev/null; then
+  # a fake agent below bash in a terminal of its own, found the way the sidebar finds it: Linux's
+  # /proc branch, then the macOS branch (kitty.child, which reads /proc on Linux)
+  for how in "" --mac-path; do
+    if out="$(NINELIVES_STATE="$TMP/live/state" KITTY_CONFIG_DIRECTORY="$TMP/live/conf" \
+              kitty +launch tests/live_agent_lookup.py $how 2>&1)"; then
+      ok "agent marks from real processes (tab_bar.py's $([ -n "$how" ] && echo macOS || echo Linux) branch, $(grep -c '^ok' <<< "$out") checks)"
+    else fail "live process lookup $how: $(grep -E '^FAIL|Error' <<< "$out" | head -3 | tr '\n' ' ')"; fi
+  done
+else skip "kitty not found"; fi
 
 echo "Test kitty"
 if [ "$QUICK" = 1 ]; then skip "--quick"

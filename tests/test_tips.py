@@ -1,19 +1,33 @@
 #!/usr/bin/env python3
 """Unit tests for config/tips.sh (kitty-sounds, kitty-cat, kitty-quests, kitty-tips, ninelives).
 Each test sources tips.sh in a fresh bash with HOME, KITTY_CONFIG_DIRECTORY and NINELIVES_STATE in a
-temp folder and paplay replaced by a stub, so nothing plays and nothing real is touched.
+temp folder and paplay (afplay on macOS) replaced by a stub, so nothing plays and nothing real is
+touched. bash runs with OSTYPE=linux-gnu (the Linux path, on any system) unless a test says darwin;
+the same tests run again in zsh where there is one (macOS's default shell), on the system's own path.
+bash is the first on PATH among /usr/bin and /bin: on macOS that is its bash 3.2.
     python3 tests/test_tips.py"""
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TIPS = os.path.join(HERE, "..", "config", "tips.sh")
+LANG = "en_US.UTF-8" if sys.platform == "darwin" else "C.UTF-8"    # macOS has no C.UTF-8
+NATIVE_OS = "darwin" if sys.platform == "darwin" else "linux-gnu"
 
 
 class TipsCase(unittest.TestCase):
+    SHELL = "bash"
+    OS = "linux-gnu"            # bash: OSTYPE is set to this before tips.sh is sourced
+
+    @property
+    def mac(self):
+        return self.OS.startswith("darwin")
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         t = self.tmp.name
@@ -23,11 +37,13 @@ class TipsCase(unittest.TestCase):
         for d in (self.conf, self.state, self.bin, os.path.join(self.conf, "sounds")):
             os.makedirs(d)
         for s in ("done", "done-2", "done-3", "needs-you", "error", "badge", "rank", "drop"):
-            open(os.path.join(self.conf, "sounds", s + ".oga"), "w").close()
+            for ext in (".oga", ".wav"):            # (install.sh makes the .wav ones on macOS)
+                open(os.path.join(self.conf, "sounds", s + ext), "w").close()
         self.log = os.path.join(t, "paplay.log")
-        with open(os.path.join(self.bin, "paplay"), "w") as f:
-            f.write(f'#!/bin/sh\necho "$*" >> "{self.log}"\n')
-        os.chmod(os.path.join(self.bin, "paplay"), 0o755)
+        for player in ("paplay", "afplay"):
+            with open(os.path.join(self.bin, player), "w") as f:
+                f.write(f'#!/bin/sh\necho "{player} $*" >> "{self.log}"\n')
+            os.chmod(os.path.join(self.bin, player), 0o755)
         with open(os.path.join(self.bin, "kitty"), "w") as f:
             f.write("#!/bin/sh\necho 'kitty 0.51.0 created by Kovid Goyal'\n")
         os.chmod(os.path.join(self.bin, "kitty"), 0o755)
@@ -37,11 +53,15 @@ class TipsCase(unittest.TestCase):
 
     def sh(self, script):
         env = {"HOME": self.tmp.name, "KITTY_CONFIG_DIRECTORY": self.conf, "NINELIVES_STATE": self.state,
-               "PATH": self.bin + ":/usr/bin:/bin", "COLUMNS": "100", "LANG": "C.UTF-8", "TERM": "dumb"}
+               "PATH": self.bin + ":/usr/bin:/bin", "COLUMNS": "100", "LANG": LANG, "TERM": "dumb"}
         # tips-off first: sourcing tips.sh would otherwise print a random tip
         open(os.path.join(self.conf, "tips-off"), "a").close()
-        r = subprocess.run(["bash", "--norc", "-c", f'source "{TIPS}"; rm -f "{self.conf}/tips-off"; {script}'],
-                           env=env, capture_output=True, text=True, timeout=30)
+        body = f'source "{TIPS}"; rm -f "{self.conf}/tips-off"; {script}'
+        if self.SHELL == "bash":            # (a zsh's full path: PATH here has only the stubs and system folders)
+            cmd = ["bash", "--norc", "-c", f"OSTYPE={self.OS}; {body}"]
+        else:
+            cmd = [self.SHELL, "-f", "-c", body]           # zsh -f: no startup files
+        r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         return re.sub(r"\x1b\[[0-9;]*m", "", r.stdout)
 
@@ -49,6 +69,7 @@ class TipsCase(unittest.TestCase):
         return os.path.exists(os.path.join(self.conf, name))
 
     def played(self):
+        """[[player, args…]] for every sound played."""
         try:
             with open(self.log) as f:
                 return [l.split() for l in f]
@@ -81,9 +102,42 @@ class Sounds(TipsCase):
     def test_preview_plays_each_sound_at_the_set_volume(self):
         self.sh("sleep() { :; }; kitty-sounds volume 50 >/dev/null; kitty-sounds")
         played = self.played()
+        ext = ".wav" if self.mac else ".oga"
         self.assertEqual([os.path.basename(p[-1]) for p in played],
-                         ["done.oga", "done-2.oga", "needs-you.oga", "error.oga", "badge.oga", "rank.oga", "drop.oga"])
-        self.assertTrue(all(p[0] == "--volume=20000" for p in played), played)
+                         [n + ext for n in ("done", "done-2", "needs-you", "error", "badge", "rank", "drop")])
+        if self.mac:      # afplay: a plain gain, paplay's 20000 of 65536 cubed (the same level)
+            self.assertTrue(all(p[:3] == ["afplay", "-v", "0.02842171"] for p in played), played)
+        else:
+            self.assertTrue(all(p[:2] == ["paplay", "--volume=20000"] for p in played), played)
+
+
+class MacSounds(TipsCase):
+    """bash with OSTYPE=darwin…, on any system: afplay and the .wav sounds, never paplay."""
+    OS = "darwin23"
+
+    def test_preview_uses_afplay_and_the_wav_files(self):
+        self.sh("sleep() { :; }; kitty-sounds volume 100 >/dev/null; kitty-sounds")
+        played = self.played()
+        self.assertEqual(len(played), 7, played)
+        self.assertTrue(all(p[:3] == ["afplay", "-v", "0.22737368"] and p[3].endswith(".wav") for p in played), played)
+
+    def test_the_lowest_volume_is_quiet_not_silent(self):
+        self.sh("sleep() { :; }; kitty-sounds volume 5 >/dev/null; kitty-sounds")
+        played = self.played()
+        self.assertTrue(played and all(p[:3] == ["afplay", "-v", "0.00002842"] for p in played), played)
+
+    def test_a_mac_tip_only_on_a_mac(self):
+        self.assertIn("On a Mac, Alt is Option", self.sh("kitty-tips all"))
+        self.OS = "linux-gnu"
+        self.assertNotIn("On a Mac", self.sh("kitty-tips all"))
+
+    def test_without_its_wav_a_sound_falls_back_to_macos_own(self):
+        os.remove(os.path.join(self.conf, "sounds", "done.wav"))
+        self.sh("sleep() { :; }; kitty-sounds")
+        files = [p[-1] for p in self.played()]
+        self.assertNotIn(os.path.join(self.conf, "sounds", "done.oga"), files)   # afplay can't play it
+        if os.path.exists("/System/Library/Sounds/Glass.aiff"):
+            self.assertEqual(files[0], "/System/Library/Sounds/Glass.aiff")
 
 
 class Switches(TipsCase):
@@ -136,6 +190,17 @@ class RestartHint(TipsCase):
         self.write("same", "same")
         self.assertNotIn("restart kitty", self.sh("ninelives"))
 
+    @unittest.skipUnless(shutil.which("shasum"), "no shasum here")
+    def test_shasum_stands_in_for_sha1sum(self):
+        # macOS has no sha1sum: its shasum (SHA-1 too) gives the same fingerprint
+        with open(os.path.join(self.bin, "sha1sum"), "w") as f:
+            f.write("#!/bin/sh\nexit 127\n")
+        os.chmod(os.path.join(self.bin, "sha1sum"), 0o755)
+        self.write("old", "new")
+        self.assertIn("restart kitty", self.sh("ninelives"))
+        self.write("same", "same")
+        self.assertNotIn("restart kitty", self.sh("ninelives"))
+
 
 class Hygiene(TipsCase):
     def test_ninelives_leaves_no_row_function_behind(self):
@@ -148,6 +213,14 @@ class Hygiene(TipsCase):
         both = self.sh(f'unset _NL_TIP_SHOWN; source "{TIPS}"; source "{TIPS}"')
         self.assertEqual(len(first.splitlines()), 1)
         self.assertEqual(len(both.splitlines()), 1)
+
+    def test_a_random_tip_is_never_empty(self):
+        # (zsh counts array elements from 1: an index from 0 once picked nothing)
+        open(os.path.join(self.conf, "quests-off"), "w").close()
+        out = self.sh("i=0; while [ $i -lt 60 ]; do kitty-tips; i=$((i + 1)); done")
+        tips = [l for l in out.splitlines() if "kitty tip:" in l]
+        self.assertEqual(len(tips), 60, out)
+        self.assertTrue(all(re.search(r"kitty tip: \S", l) for l in tips), [l for l in tips if not re.search(r"kitty tip: \S", l)])
 
     def test_follows_xdg_config_home(self):
         r = self.sh('unset KITTY_CONFIG_DIRECTORY; XDG_CONFIG_HOME=/x/y; source "' + TIPS + '"; echo "$_nl_conf"')
@@ -172,9 +245,9 @@ class QuestList(TipsCase):
 class ShortcutSheet(TipsCase):
     SHEET = os.path.join(HERE, "..", "config", "shortcuts.sh")
 
-    def sheet(self):
+    def sheet(self, ostype="linux-gnu"):
         env = {"HOME": self.tmp.name, "KITTY_CONFIG_DIRECTORY": self.conf, "NINELIVES_STATE": self.state,
-               "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TERM": "dumb", "COLUMNS": "100"}
+               "PATH": "/usr/bin:/bin", "LANG": LANG, "TERM": "dumb", "COLUMNS": "100", "OSTYPE": ostype}
         r = subprocess.run(["bash", self.SHEET], env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         return re.sub(r"\x1b\[[0-9;]*m", "", r.stdout)
@@ -193,11 +266,25 @@ class ShortcutSheet(TipsCase):
         self.assertTrue(self.line(out, "Ctrl+Shift+T ").startswith("   "))     # not a quest
         self.assertIn("1/16", out)
 
+    def test_a_mac_note_only_on_a_mac(self):
+        self.assertIn("On a Mac, Alt is Option", self.sheet("darwin23"))
+        self.assertNotIn("On a Mac", self.sheet("linux-gnu"))
+
     def test_no_marks_with_quests_off(self):
         open(os.path.join(self.conf, "quests-off"), "w").close()
         out = self.sheet()
         self.assertNotIn("★", out)
         self.assertTrue(self.line(out, "Ctrl+Alt+Z ").startswith("   "))
+
+
+# The same tests in zsh (macOS's default shell), sourced the way ~/.zshrc would. Skipped where there
+# is no zsh; the Gauntlet's macOS lane has one and runs them.
+ZSH = shutil.which("zsh")
+for _case in (Sounds, Switches, Status, RestartHint, Hygiene, QuestList):
+    _name = "Zsh" + _case.__name__
+    globals()[_name] = unittest.skipUnless(ZSH, "zsh not installed")(
+        type(_name, (_case,), {"SHELL": ZSH, "OS": NATIVE_OS}))
+del _case, _name
 
 if __name__ == "__main__":
     unittest.main()
