@@ -66,7 +66,10 @@ def until(fn, want, seconds=5.0):
     end = time.monotonic() + seconds
     while True:
         tb._groups.update(at=-99.0)          # macOS: a fresh process-group map each try
-        got = fn()
+        try:
+            got = fn()
+        except OSError as e:                # macOS answers EIO for a process caught mid-exec
+            got = e                          # (the sidebar's callers treat it as unknown too)
         if got == want or time.monotonic() > end:
             return got
         time.sleep(0.1)
