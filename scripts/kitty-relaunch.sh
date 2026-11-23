@@ -2,7 +2,8 @@
 # kitty-relaunch.sh — close a kitty window and reopen every tab in the newest kitty.
 # Each tab comes back in its folder: Claude tabs resume their session (claude --resume <ID>, or
 # claude --continue when it was started without one), omp tabs continue their last session, anything
-# else becomes a plain shell there. Split tabs come back with every pane, each in its own folder with
+# else becomes a plain shell there: kitty's own shell, with shell integration (an agent's tab gets one
+# too once the agent exits). Split tabs come back with every pane, each in its own folder with
 # its own command, in the same layout and sizes, with the pane you were in focused. Tab names you set
 # come back, and so does the tab you were on. The new kitty starts from a kitty session file
 # (scripts/kitty-tabs.py session), the format kitty's own save_as_session writes.
@@ -10,7 +11,7 @@
 #
 #   bash scripts/kitty-relaunch.sh            reload now
 #   bash scripts/kitty-relaunch.sh --when-idle   wait until no Claude/omp tab is busy, then reload
-#   bash scripts/kitty-relaunch.sh --dry-run  just show what would be reopened
+#   bash scripts/kitty-relaunch.sh --dry-run  just show what would be reopened (what the log lists)
 #   bash scripts/kitty-relaunch.sh --status   which tabs --when-idle would wait for, and why
 #
 # Which kitty: the one you run it in (its remote-control socket, $KITTY_LISTEN_ON). Run from
@@ -100,8 +101,16 @@ if [ $detached != 1 ] && [ "$MODE" != --dry-run ] && [ "$MODE" != --status ]; th
   exit 0
 fi
 
+# kitty's own save keeps the splits of a zoomed tab (Ctrl+Alt+Z), which `kitty @ ls` doesn't show.
+# Optional: without it (an older kitty, an error) zoomed tabs come back zoomed, other splits as usual.
+# (--dry-run reads it too, so it shows what the restart would open.)
+save_layouts() {
+  rm -f "$SAVED"
+  "$NEW" @ --to "$SOCK" action save_as_session --save-only "$SAVED" >/dev/null 2>&1 || true
+  for _ in $(seq 1 10); do [ -s "$SAVED" ] && break; sleep 0.2; done
+}
 
-if [ "$MODE" = --dry-run ]; then kls | python3 "$TABS_PY" show; exit 0; fi
+if [ "$MODE" = --dry-run ]; then save_layouts; kls | python3 "$TABS_PY" show "$SAVED"; exit 0; fi
 if [ "$MODE" = --status ]; then
   b="$(busy)"
   if [ -n "$b" ]; then echo "--when-idle would wait for:"; printf '%s\n' "$b"; else echo "All tabs idle: --when-idle would restart now."; fi
@@ -125,11 +134,7 @@ if [ "$MODE" = --when-idle ]; then
   done
 fi
 
-# kitty's own save keeps the splits of a zoomed tab (Ctrl+Alt+Z), which `kitty @ ls` doesn't show.
-# Optional: without it (an older kitty, an error) zoomed tabs come back zoomed, other splits as usual.
-rm -f "$SAVED"
-"$NEW" @ --to "$SOCK" action save_as_session --save-only "$SAVED" >/dev/null 2>&1 || true
-for _ in $(seq 1 10); do [ -s "$SAVED" ] && break; sleep 0.2; done
+save_layouts
 DATA="$(kls)"
 python3 "$TABS_PY" session "$SAVED" <<< "$DATA" > "$SESSION.tmp" && [ -s "$SESSION.tmp" ] \
   || { echo "$(date +%T) FAILED: could not work out what to reopen; kitty left running"; exit 1; }
@@ -155,13 +160,9 @@ mv "$SESSION.tmp" "$SESSION"
 WHAT="$(python3 "$TABS_PY" show "$SAVED" <<< "$DATA")"
 echo "$(date +%T) reopening $(grep -c '^new_tab' "$SESSION") tabs ($(grep -c '^launch' "$SESSION") windows):"
 printf '%s\n' "$WHAT"                                       # log exactly what will be reopened
-# kitty's pid: the parent of the first window's process that has one
-OLD_PID="$(python3 -c 'import json,sys
-for o in json.load(sys.stdin):
-    for t in o["tabs"]:
-        for w in t["windows"]:
-            if w.get("pid"): print(w["pid"]); raise SystemExit' <<< "$DATA" 2>/dev/null || true)"
-KPID="$( [ -n "$OLD_PID" ] && ps -o ppid= -p "$OLD_PID" 2>/dev/null | tr -d ' ' || true)"
+# kitty's pid: up from a window's process to kitty (not just its parent: under launch --hold a
+# window's pid is its command, which kitten run-shell started)
+KPID="$(python3 "$TABS_PY" kitty-pid <<< "$DATA" 2>/dev/null || true)"
 if ! [[ "$KPID" =~ ^[0-9]+$ ]] || [ "$KPID" -le 1 ]; then
   echo "$(date +%T) FAILED: could not find the old kitty's process; kitty left running"; exit 1
 fi

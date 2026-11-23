@@ -32,7 +32,7 @@ remote-control socket (below) only load when kitty starts. To update later: `git
 
 ## Restart kitty and keep every tab
 ```bash
-bash scripts/kitty-relaunch.sh --dry-run     # list what would reopen
+bash scripts/kitty-relaunch.sh --dry-run     # list what would reopen (exactly what the restart opens)
 bash scripts/kitty-relaunch.sh --status      # which tabs --when-idle would wait for, and why
 bash scripts/kitty-relaunch.sh --when-idle   # wait until every tab is idle (~30 s quiet), then restart
 bash scripts/kitty-relaunch.sh               # restart now
@@ -56,7 +56,8 @@ Each tab comes back in its folder, and so does every pane of a split tab (each i
 - **Claude** with `claude --resume <session>`. A Claude pane started without a session id comes back with `claude --continue` (the newest session in that folder). Several such panes in one folder (in any tabs) can't be told apart, so they come back as shells with a hint to `claude --resume`.
 - A folder that no longer exists becomes your home folder (a Claude pane without a session id then gets the `claude --resume` hint, since `--continue` would pick home's newest session).
 - **omp** with `--continue`.
-- **Anything else** as a shell.
+- **Anything else** as a shell: kitty's own shell, the one a new tab gets, with kitty's shell integration (Ctrl+Shift+Z/X jump between prompts, Ctrl+Shift+G shows the last command's output, new tabs and splits open in its folder).
+- When a resumed **agent exits**, the same kind of shell takes its place in that pane, integration included (kitty's `launch --hold`). Its tab keeps the agent's mark (`✳`, `π`) in the sidebar while the agent runs.
 
 **Splits** come back as they were: the same layout, the same split sizes, and the pane you were in.
 A zoomed tab (Ctrl+Alt+Z) comes back zoomed, and Ctrl+Alt+Z still returns to its splits. Names you
@@ -64,7 +65,9 @@ gave tabs (Ctrl+Shift+R) come back too, and kitty lands on the tab you were on. 
 windows come back as tabs of one window. Under the hood the new kitty opens a kitty session file
 (`~/.cache/ninelives/kitty-relaunch.kitty-session`) written like kitty's own
 `save_as_session` output, and kitty's own parser checks it before the old kitty is closed (if it can't
-read it, the restart stops and kitty keeps running); `--dry-run` lists every pane. The new kitty
+read it, the restart stops and kitty keeps running); `--dry-run` lists every pane, and the log lists
+the same: both come from the plan the session file is written from, so a pane whose folder is gone
+shows as your home folder there too. The new kitty
 listens on the old one's socket. The script runs detached, so it finishes even when started from
 inside that window. Log: `~/.cache/ninelives/kitty-relaunch.log` (`$XDG_CACHE_HOME/ninelives` if you
 set that).

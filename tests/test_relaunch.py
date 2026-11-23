@@ -50,8 +50,11 @@ class NormalRestart(unittest.TestCase):
             f.write(self.SYSTEMCTL)
         for n in ("kitty", "systemctl"):
             os.chmod(f"{d}/bin/{n}", 0o755)
-        # the "old kitty": a process whose child stands in for the shell in its one window
-        subprocess.run(["bash", "-c", f'setsid bash -c \'echo $$ > "{d}/helper.pid"; sleep 60 & '
+        # the "old kitty": a process named kitty (bash under that name: the restart looks for a
+        # process called kitty above a window's) whose child stands in for the shell in its window
+        os.makedirs(f"{d}/old")
+        os.symlink("/bin/bash", f"{d}/old/kitty")
+        subprocess.run(["bash", "-c", f'setsid "{d}/old/kitty" -c \'echo $$ > "{d}/helper.pid"; sleep 60 & '
                         f'echo $! > "{d}/child.pid"; wait\' >/dev/null 2>&1 < /dev/null &'], check=True)
         for _ in range(50):
             if os.path.exists(f"{d}/child.pid") and read(f"{d}/child.pid").strip():

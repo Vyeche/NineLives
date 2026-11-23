@@ -33,7 +33,7 @@ How to test: [docs/wiki/Testing.md](docs/wiki/Testing.md).
 
 - Only one agent at a time may use the hidden test kitty (one display, one socket).
 - Click on the test display with `python3 scripts/xclick.py :97 X Y` (XTest; never the real pointer).
-  `$NINELIVES_STATE/sidebar.txt` says which tabs are shown and where the buttons are.
+  `$NINELIVES_STATE/sidebar.txt` says which tabs are shown, their agent marks and where the buttons are.
 - Run the relaunch only against the test kitty: `NL_KITTY_SOCKET=unix:@ninelives-test-kitty`.
 - `bash scripts/check.sh` must pass before every commit (gate on its exit status).
 

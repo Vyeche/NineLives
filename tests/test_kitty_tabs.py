@@ -25,13 +25,17 @@ def tab(*windows, title=None, active=False):
             "title_overridden": title is not None, "windows": list(windows)}
 
 
+def exists(_path):
+    return True                 # fake folders: every one exists (see session() for missing ones)
+
+
 def rows(tabs):
-    return [r.split(kt.US) for r in kt.snapshot(tabs)]
+    return [r.split(kt.US) for r in kt.snapshot(tabs, isdir=exists, home="/home/me")]
 
 
 class Snapshot(unittest.TestCase):
     def test_plain_shell_comes_back_as_a_shell_in_its_folder(self):
-        self.assertEqual(rows([tab(win("/a", procs=[["bash"]]))]), [["/a", "exec bash", "", "0"]])
+        self.assertEqual(rows([tab(win("/a", procs=[["bash"]]))]), [["/a", "", "", "0"]])
 
     def test_claude_with_a_session_id_resumes_it(self):
         cmd = rows([tab(win(procs=[["claude", "--resume", "abc-123"]]))])[0][1]
@@ -70,7 +74,7 @@ class Snapshot(unittest.TestCase):
 
     def test_omp_continues(self):
         cmd = rows([tab(win(procs=[["omp", "-c", "--model", "x y"]]))])[0][1]
-        self.assertEqual(cmd, "omp --model 'x y' --continue; exec bash")
+        self.assertEqual(cmd, "omp --model 'x y' --continue")
 
     def test_renamed_tab_keeps_its_name_and_active_tab_is_marked(self):
         r = rows([tab(win(title="bash"), title="My build"), tab(win(title="vim x"), active=True)])
@@ -167,7 +171,9 @@ def session(tabs, saved=None, missing=()):
 
 
 def launches(lines):
-    """Each launch line as (unserialize id or None, cwd or None, bash -lc command)."""
+    """Each launch line as (unserialize id or None, the folder it opens in, its command): "" for
+    kitty's own shell (no command), else the bash -lc command it runs under --hold (or under
+    kitten run-shell, which starts the shell in a folder --cwd can't name)."""
     import json, shlex
     out = []
     for line in lines:
@@ -177,11 +183,20 @@ def launches(lines):
         sid = None
         if args[0].startswith("kitty-unserialize-data="):
             sid = json.loads(args.pop(0).split("=", 1)[1])["id"]
-        cwd = args.pop(0)[len("--cwd="):] if args[0].startswith("--cwd=") else None
-        if args[0].startswith("--var="):
-            args.pop(0)
-        assert args[:2] == ["bash", "-lc"], line
-        out.append((sid, cwd, args[2]))
+        cwd, opts = None, []
+        while args and args[0].startswith("--"):
+            o = args.pop(0)
+            if o.startswith("--cwd="):
+                cwd = o[len("--cwd="):]
+            else:
+                opts.append(o)
+        if args[:2] == ["kitten", "run-shell"]:
+            assert args[2].startswith("--cwd="), line
+            cwd, args = args[2][len("--cwd="):], args[3:]
+        elif args:
+            assert "--hold" in opts, line             # the shell comes back when the command exits
+        assert not args or (args[:2] == ["bash", "-lc"] and len(args) == 3), line
+        out.append((sid, cwd, args[2] if args else ""))
     return out
 
 
@@ -200,7 +215,7 @@ class Splits(unittest.TestCase):
         state = json.loads(next(l for l in lines if l.startswith("set_layout_state "))[17:])
         self.assertEqual(state["pairs"], NESTED)                    # tree, axes and sizes as they were
         self.assertEqual([(i, c) for i, c, _ in launches(lines)], [(1, "/l"), (2, "/tr"), (3, "/br")])
-        self.assertTrue(all(cmd == "exec bash" for *_, cmd in launches(lines)))
+        self.assertTrue(all(cmd == "" for *_, cmd in launches(lines)))
         self.assertEqual(lines[-1], "focus_tab 0")
 
     def test_the_pane_you_were_in_gets_the_focus(self):
@@ -214,9 +229,9 @@ class Splits(unittest.TestCase):
         t = split_tab(wid(1, "/p", procs=[["bash"]]), wid(2, "/p", procs=[["bash"], ["claude", "--resume", "S1"]]),
                       wid(3, "/q", procs=[["bash"], ["vim", "x"]]), pairs=NESTED)
         cmds = [cmd for *_, cmd in launches(session([t]))]
-        self.assertEqual(cmds[0], "exec bash")
+        self.assertEqual(cmds[0], "")
         self.assertTrue(cmds[1].startswith("claude --resume S1;"), cmds[1])
-        self.assertEqual(cmds[2], "exec bash")
+        self.assertEqual(cmds[2], "")
 
     def test_two_fresh_claude_panes_in_one_folder_do_not_both_continue(self):
         t = split_tab(wid(1, "/p", procs=[["claude"]]), wid(2, "/p", procs=[["claude"]]),
@@ -234,27 +249,27 @@ class Splits(unittest.TestCase):
 
     def test_single_pane_tabs_are_unchanged(self):
         r = rows([tab(win("/a", procs=[["omp"]]), active=True)])
-        self.assertEqual(r, [["/a", "omp --continue; exec bash", "", "1"]])
+        self.assertEqual(r, [["/a", "omp --continue", "", "1"]])
         lines = session([tab(win("/a", procs=[["omp"]]), title="Mine", active=True)])
-        self.assertEqual(lines, ["new_tab Mine", "launch --cwd=/a bash -lc 'omp --continue; exec bash'",
+        self.assertEqual(lines, ["new_tab Mine", "launch --cwd=/a --hold bash -lc 'omp --continue'",
                                  "focus", "", "focus_tab 0"])
 
     def test_without_layout_state_a_split_tab_comes_back_as_its_active_pane(self):
         t = tab(wid(1, "/l", active=False), wid(2, "/r", procs=[["omp"]], active=True))   # an older kitty
         lines = session([t])
         self.assertFalse(any(l.startswith("set_layout_state") for l in lines))
-        self.assertEqual(launches(lines), [(None, "/r", "omp --continue; exec bash")])
+        self.assertEqual(launches(lines), [(None, "/r", "omp --continue")])
 
     def test_a_layout_state_that_does_not_match_the_windows_falls_back_to_one_pane(self):
         t = split_tab(wid(1, "/l", active=True), wid(2, "/r", active=False), pairs={"one": 1, "two": 99})
-        self.assertEqual(launches(session([t])), [(None, "/l", "exec bash")])
+        self.assertEqual(launches(session([t])), [(None, "/l", "")])
         t = split_tab(wid(1, "/l"), pairs={"one": 1}, groups=[[1], [77]])        # a group with no window
-        self.assertEqual(launches(session([t])), [(None, "/l", "exec bash")])
+        self.assertEqual(launches(session([t])), [(None, "/l", "")])
 
     def test_snapshot_still_gives_each_tabs_active_pane(self):
         t = split_tab(wid(1, "/l", active=False), wid(2, "/r", procs=[["omp"]], active=True),
                       pairs={"one": 1, "two": 2}, title="Work", active=True)
-        self.assertEqual(rows([t]), [["/r", "omp --continue; exec bash", "Work", "1"]])
+        self.assertEqual(rows([t]), [["/r", "omp --continue", "Work", "1"]])
 
     def test_the_window_under_an_overlay_comes_back_not_the_overlay(self):
         overlay = wid(5, "/r", procs=[["python3", "tab-finder.py"]], active=True)    # the search box
@@ -298,8 +313,8 @@ class Splits(unittest.TestCase):
         t = split_tab(wid(1, "/gone"), wid(2, "/x/$HOME y", active=False), pairs={"one": 1, "two": 2})
         got = launches(session([t], missing={"/gone"}))
         self.assertEqual(got[0][1], "/home/me")
-        self.assertIsNone(got[1][1])                     # kitty would expand $HOME in --cwd=
-        self.assertTrue(got[1][2].startswith("cd -- '/x/$HOME y' 2>/dev/null; exec bash"), got[1][2])
+        self.assertEqual(got[1][1], "/x/$HOME y")        # kitten run-shell --cwd: kitty expands $HOME in --cwd=
+        self.assertEqual(got[1][2], "")                  # kitty's shell, no command
 
     def test_a_fresh_claude_in_a_missing_folder_does_not_continue_homes_session(self):
         t1 = split_tab(wid(1, "/gone", procs=[["claude"]]), wid(2, "/also-gone", procs=[["claude"]], active=False),
@@ -325,7 +340,7 @@ class Splits(unittest.TestCase):
     def test_dollar_signs_in_a_name_stay_literal(self):
         lines = session([tab(win("/a"), title="cost $5 ${HOME} $$")])
         self.assertEqual(lines[0], "new_tab cost $$5 $${HOME} $$$$")      # kitty reads $$ as $
-        self.assertEqual(kt.show([tab(win("/a"), title="cost $5")])[1], '       shell  name "cost $5"')
+        self.assertEqual(kt.show([tab(win("/a"), title="cost $5")], isdir=exists)[1], '       shell  name "cost $5"')
 
     def test_names_and_the_active_tab_across_kitty_windows(self):
         data = [{"tabs": [tab(win("/a"), active=True)]},
@@ -342,7 +357,7 @@ class Splits(unittest.TestCase):
         marked = [l for l in lines if "--var=ninelives_focus=1" in l]
         self.assertEqual(len(marked), 1)
         self.assertIn("--cwd=/r", marked[0])
-        self.assertEqual(launches(lines)[1][2], "exec bash")          # the var doesn't reach the command
+        self.assertEqual(launches(lines)[1][2], "")          # the var doesn't reach the command
 
     def test_refocus_fixes_panes_the_mouse_took_and_ends_on_the_active_tab(self):
         def w(i, active, mark=False):
@@ -360,10 +375,161 @@ class Splits(unittest.TestCase):
     def test_show_lists_every_pane(self):
         t = split_tab(wid(1, "/l", active=False), wid(2, "/r", procs=[["omp"]], active=True),
                       pairs={"one": 1, "two": 2}, active=True)
-        out = "\n".join(kt.show([t]))
+        out = "\n".join(kt.show([t], isdir=exists))
         self.assertIn("[splits: 2 panes]", out)
         self.assertIn("+ /r", out)
         self.assertIn("omp --continue  (active pane)", out)
+
+
+def shown(lines):
+    """show's panes as (folder, what): the folder line without its note, and the what line
+    without the tab's name, (active) and layout notes."""
+    import re
+    out, folder = [], None
+    for line in lines:
+        if line.startswith("       "):
+            what = re.split(r"  (?:name \"|\(active|\[)", line.strip(), maxsplit=1)[0]
+            out.append((folder, what))
+        else:
+            folder = re.sub(r"^\s*(?:\d+|\+)\s+", "", line).split("  (instead of ")[0]
+    return out
+
+
+def agrees(what, cmd):
+    """Does show's what describe the session's command?"""
+    if what == "shell":
+        return cmd == ""
+    if what.startswith("shell, with a note: "):
+        return cmd == 'echo "[' + what[len("shell, with a note: "):] + ']"'
+    return cmd.startswith(what) and cmd[len(what):len(what) + 1] in ("", ";")
+
+
+class OneTruth(unittest.TestCase):
+    """#2 and #4: shells are kitty's own, agents come back under --hold, and --dry-run (show) says
+    exactly what the session file opens."""
+    def test_a_plain_shell_is_kittys_own_shell_with_no_command(self):
+        lines = session([tab(win("/a", procs=[["bash"]]))])
+        self.assertEqual(lines[1], "launch --cwd=/a")           # kitty starts it: shell integration
+
+    def test_an_agent_runs_under_hold_so_a_shell_follows_it(self):
+        lines = session([tab(win("/a", procs=[["claude", "--resume", "abc-123"]]))])
+        self.assertEqual(lines[1], "launch --cwd=/a --hold bash -lc 'claude --resume abc-123; echo; "
+                                   "echo \"[Claude exited. This is a normal shell now.]\"'")
+        self.assertNotIn("exec bash", "\n".join(lines))
+
+    def test_a_folder_with_a_dollar_starts_the_shell_through_kitten(self):
+        t = split_tab(wid(1, "/w/$HOME x", procs=[["claude", "--resume", "S"]]), wid(2, "/w/a$b", active=False),
+                      pairs={"one": 1, "two": 2})
+        lines = [l for l in session([t]) if l.startswith("launch ")]
+        import shlex
+        a = shlex.split(lines[0])
+        self.assertIn("--cwd=/home/me", a)                      # kitty's own --cwd never sees the $
+        self.assertEqual(a[a.index("kitten"):a.index("kitten") + 3], ["kitten", "run-shell", "--cwd=/w/$HOME x"])
+        self.assertEqual(a[-1], "cd -- '/w/$HOME x' 2>/dev/null; claude --resume S; echo; "
+                                "echo \"[Claude exited. This is a normal shell now.]\"")
+        b = shlex.split(lines[1])
+        self.assertEqual(b[-3:], ["kitten", "run-shell", "--cwd=/w/a$b"])     # a shell: nothing after
+        self.assertFalse(any("$" in x for x in a + b if x.startswith("--cwd=/home")))
+
+    def test_a_dollar_folder_pane_restarted_again_keeps_its_folder(self):
+        # kitty reports the folder of the window's first process: for Claude in a $ folder that is
+        # kitten run-shell's (home) until the agent exits; kitten's --cwd is the pane's folder
+        w = win("/home/me", procs=[["kitten", "run-shell", "--cwd=/w/$X", "bash", "-lc", "cd -- x; claude --resume S"],
+                                   ["bash", "-lc", "cd -- x; claude --resume S"], ["claude", "--resume", "S"]])
+        got = launches(session([tab(w)]))
+        self.assertEqual(got[0][1], "/w/$X")
+        self.assertIn("claude --resume S;", got[0][2])
+        w = win("/home/me", procs=[["kitten", "run-shell", "bash", "-lc", "x --cwd=/nope"], ["claude", "--resume", "S"]])
+        self.assertEqual(launches(session([tab(w)]))[0][1], "/home/me")      # the command's --cwd isn't kitten's
+        w = win("/w/proj", procs=[["claude", "--resume", "S"]])
+        w["foreground_processes"][0]["cwd"] = "/w/proj/sub"                     # Claude's own folder moved: not used
+        self.assertEqual(launches(session([tab(w)]))[0][1], "/w/proj")
+
+    def test_show_matches_the_session_for_a_fresh_claude_whose_folder_is_gone(self):
+        # the issue: show said `claude --continue` in the old folder; the session opens home + a note
+        t = tab(win("/gone/proj", procs=[["claude"]]))
+        out = kt.show([t], isdir=lambda p: p != "/gone/proj", home="/home/me")
+        self.assertEqual(out[0], "  1  /home/me  (instead of /gone/proj: not there)")
+        self.assertTrue(out[1].startswith("       shell, with a note: Claude was open in a folder that no "
+                                          "longer exists"), out[1])
+        self.assertNotIn("--continue", "\n".join(out))
+
+    def test_show_and_session_agree_on_every_pane(self):
+        missing = {"/gone", "/gone2"}
+        tabs = [tab(win("/a", procs=[["bash"]]), active=True),
+                tab(win("/p", procs=[["claude", "--resume", "X"]])),
+                tab(win("/p", procs=[["claude"]]), title="mine"),                        # several in /p
+                tab(win("/q", procs=[["node", "/usr/bin/claude"]])),                     # --continue
+                tab(win("/gone", procs=[["claude"]])),                                   # gone: a note
+                tab(win("/gone2", procs=[["omp", "-c"]])),                               # gone: omp in home
+                tab(win("/r", procs=[["omp", "fix\nthis"]])),                            # can't be written
+                tab(win("/w/$HOME y", procs=[["claude", "--resume", "Y"]])),
+                split_tab(wid(1, "/l"), wid(2, "/gone", active=False), wid(3, "/r", procs=[["vim"]], active=False),
+                          pairs=NESTED)]
+        exists = lambda p: p not in missing
+        got = launches(kt.session(tabs, isdir=exists, home="/home/me"))
+        said = shown(kt.show(tabs, isdir=exists, home="/home/me"))
+        self.assertEqual(len(got), len(said))
+        for (_, cwd, cmd), (folder, what) in zip(got, said):
+            self.assertEqual(cwd, folder)
+            body = cmd.split(" 2>/dev/null; ", 1)[1] if cmd.startswith("cd -- ") else cmd
+            self.assertTrue(agrees(what, body), (folder, what, cmd))
+        self.assertEqual([w for _, w in said][:8], [
+            "shell", "claude --resume X",
+            "shell, with a note: Several Claude tabs were open in this folder: claude --resume to pick yours.",
+            "claude --continue",
+            "shell, with a note: Claude was open in a folder that no longer exists: claude --resume to find its session.",
+            "omp --continue", "shell, with a note: This pane's command could not be brought back.",
+            "claude --resume Y"])
+        self.assertEqual(said[5][0], "/home/me")
+
+    def test_snapshot_comes_from_the_same_plan(self):
+        r = [x.split(kt.US) for x in kt.snapshot([tab(win("/gone", procs=[["claude"]]))],
+                                                 isdir=lambda p: False, home="/home/me")]
+        self.assertEqual(r[0][0], "/home/me")
+        self.assertIn("no longer exists", r[0][1])
+
+
+class KittyPid(unittest.TestCase):
+    """kitty-relaunch.sh closes the old kitty by pid; a window's pid can sit under a wrapper."""
+    PROCS = {500: ("kitty", 1), 610: ("kitten", 500), 611: ("bash", 610), 700: ("bash", 500),
+             701: ("kitty", 500)}
+
+    def stat(self, pid):
+        if pid not in self.PROCS:
+            raise OSError("gone")
+        return self.PROCS[pid]
+
+    def test_follows_a_wrapper_up_to_kitty(self):
+        t = tab(dict(win(), pid=611))               # launch --hold: kitty → kitten run-shell → bash -lc
+        self.assertEqual(kt.kitty_pid([t], self.stat), 500)
+
+    def test_a_plain_window_is_kittys_child(self):
+        self.assertEqual(kt.kitty_pid([tab(dict(win(), pid=700))], self.stat), 500)
+
+    def test_a_window_running_something_called_kitty_is_not_kitty(self):
+        self.assertEqual(kt.kitty_pid([tab(dict(win(), pid=701))], self.stat), 500)    # kitty +runpy, kitty @ …
+
+    def test_skips_windows_it_cannot_follow(self):
+        tabs = [tab(dict(win(), pid=999)), tab(dict(win())), tab(dict(win(), pid=611))]
+        self.assertEqual(kt.kitty_pid(tabs, self.stat), 500)
+
+    def test_no_kitty_above_is_none(self):
+        self.assertIsNone(kt.kitty_pid([tab(dict(win(), pid=999))], self.stat))
+        procs = {5: ("bash", 4), 4: ("systemd", 1)}
+        self.assertIsNone(kt.kitty_pid([tab(dict(win(), pid=5))], lambda p: procs[p]))
+
+    def test_reads_proc_stat_with_odd_command_names(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.NamedTemporaryFile("wb", delete=False) as f:
+            f.write(b"123 (we ird) name) S 77 123 123 0 -1\n")
+        try:
+            real = open
+            with mock.patch("builtins.open", lambda p, *a, **k: real(f.name, *a, **k)):
+                self.assertEqual(kt._proc_stat(123), ("we ird) name", 77))
+        finally:
+            os.unlink(f.name)
 
 
 class Main(unittest.TestCase):

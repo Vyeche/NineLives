@@ -179,8 +179,9 @@ print(" ".join(str(i + 1) for i, t in enumerate(json.load(sys.stdin)[0]["tabs"])
     # left | right with the right half split top / bottom (a Claude pane at the bottom, sizes not
     # even), the renamed tab 10 split top / bottom with the bottom split left | right, tab 11 split
     # and zoomed (Ctrl+Alt+Z). Compared by folder: names, layouts, split trees and sizes, panes,
-    # the active pane and the active tab; tab 3's name has $ signs that must stay literal. Claude
-    # and omp are stubs here (test-kitty.sh).
+    # the active pane and the active tab; tab 3's name has $ signs that must stay literal. Tab 12
+    # runs Claude in a folder named "$HOME x" (kitty would expand it in --cwd), tab 13 runs a
+    # resumed Claude. Claude and omp are stubs here (test-kitty.sh).
     k() { bash scripts/test-kitty.sh k "$@" 2>/dev/null; }
     wid() { k ls | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['tabs'][$1]['windows'][0]['id'])"; }
     sp="$NL_TEST_DIR/code/split"; mkdir -p "$sp/a" "$sp/b" "$sp/c" "$sp/d" "$sp/e"
@@ -191,14 +192,22 @@ print(" ".join(str(i + 1) for i, t in enumerate(json.load(sys.stdin)[0]["tabs"])
     w="$(wid 9)"; c="$(k launch --match "id:$w" --location=hsplit --cwd "$sp/c" bash --norc)"
     k launch --match "id:$c" --location=vsplit --cwd "$sp/d" bash --norc >/dev/null; k focus-window --match "id:$w"
     w="$(wid 10)"; k launch --match "id:$w" --location=vsplit --cwd "$sp/e" bash --norc >/dev/null
+    mkdir -p "$sp/\$HOME x"
+    w="$(k launch --type=tab --cwd "$sp" bash --norc)"; sleep 0.3
+    k send-text --match "id:$w" $'cd \'$HOME x\' && claude --resume dollar-1\n'
+    w="$(k launch --type=tab --cwd "$sp/d" bash --norc)"; sleep 0.3
+    k send-text --match "id:$w" $'claude --resume abc-456\n'
     k focus-tab --match index:10; k action toggle_layout stack; k focus-tab --match index:9
     k set-tab-title --match "id:$(wid 2)" 'cost $HOME ${PATH} $$'; sleep 1    # kitty expands $ in a session
     # each tab without window ids: name, layout, splits tree by folder (axis, size), panes, active pane
     desc='import json, sys
 out = []
+def where(w):     # like kitty: the folder of the newest foreground process (an agent under a wrapper)
+    fg = [p for p in w.get("foreground_processes") or [] if p.get("cwd")]
+    return max(fg, key=lambda p: p["pid"])["cwd"] if fg else w["cwd"]
 for o in json.load(sys.stdin):
     for t in o["tabs"]:
-        cwd = {w["id"]: w["cwd"] for w in t["windows"]}
+        cwd = {w["id"]: where(w) for w in t["windows"]}
         st = t.get("layout_state") or {}
         g2w = {g["id"]: g["window_ids"][0] for g in st.get("all_windows", {}).get("window_groups", [])}
         def norm(p):
@@ -206,29 +215,87 @@ for o in json.load(sys.stdin):
                 return [p.get("horizontal", True), round(p.get("bias", 0.5), 2), norm(p["one"]), norm(p.get("two"))]
             return cwd.get(g2w.get(p, p)) if p is not None else None
         out.append([t["title"] if t.get("title_overridden") else "", t["layout"], norm(st.get("pairs")),
-                    len(t["windows"]), next((w["cwd"] for w in t["windows"] if w["is_active"]), None), t["is_active"]])
+                    len(t["windows"]), next((where(w) for w in t["windows"] if w["is_active"]), None), t["is_active"]])
 print(json.dumps(out))'
     before="$(k ls | python3 -c "$desc")"
+    dry="$(bash scripts/test-kitty.sh relaunch --dry-run 2>&1)"
     if out="$(bash scripts/test-kitty.sh relaunch 2>&1)"; then
       sleep 1.5; after="$(k ls | python3 -c "$desc")"
       k focus-tab --match index:10; k action toggle_layout stack; sleep 0.5      # unzoom tab 11
       unzoomed="$(k ls | python3 -c 'import json,sys; t=json.load(sys.stdin)[0]["tabs"][10]; print(t["layout"], len(t["layout_state"].get("pairs", {})))')"
       resumed="$(grep -c "claude --resume abc-123" "$NL_TEST_DIR/agents.log" 2>/dev/null)"
+      resumed2="$(grep -c "claude --resume dollar-1" "$NL_TEST_DIR/agents.log" 2>/dev/null)"
       splits="$(python3 -c 'import json,sys; print(sum(1 for t in json.loads(sys.argv[1]) if t[3] > 1))' "$after")"
-      if [ -n "$before" ] && [ "$before" = "$after" ] && [ "$splits" = 3 ] && [ "$unzoomed" = "splits 2" ] && [ "$resumed" = 2 ]; then
-        ok "kitty-relaunch.sh brings back $splits split tabs (layout, sizes, folders, Claude pane, active pane, zoom)"
-      else fail "relaunch with splits: unzoomed '$unzoomed', Claude resumed $resumed of 2; before $before; after $after"; fi
-      # plain shells come back as `bash -lc 'exec bash'`, which sets no title: kitty calls them
-      # "bash", and the sidebar (and the search box, same rule) must still name them by folder
+      if [ -n "$before" ] && [ "$before" = "$after" ] && [ "$splits" = 3 ] && [ "$unzoomed" = "splits 2" ] \
+          && [ "$resumed" = 2 ] && [ "$resumed2" = 2 ]; then
+        ok "kitty-relaunch.sh brings back $splits split tabs (layout, sizes, folders, Claude pane, active pane, zoom; a \$ folder)"
+      else fail "relaunch with splits: unzoomed '$unzoomed', Claude resumed $resumed and $resumed2 of 2; before $before; after $after"; fi
+      # --dry-run and the log list what the session file opens, pane by pane (folder, command)
+      sess="$NL_TEST_DIR/home/.cache/ninelives/kitty-relaunch.kitty-session"
+      logged="$(sed -n '/ reopening [0-9]* tabs/,/ closing old kitty/p' <<< "$out" | sed '1d;$d')"
+      # (the parsers are the unit tests' own: tests/test_kitty_tabs.py launches, shown, agrees)
+      match="$(python3 -c 'import importlib.util, sys
+spec = importlib.util.spec_from_file_location("t", "tests/test_kitty_tabs.py"); t = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(t)
+said = t.shown(sys.stdin.read().splitlines())
+got = t.launches(open(sys.argv[1], encoding="utf-8").read().splitlines())
+bad = [(f, w, c, cmd) for (_, c, cmd), (f, w) in zip(got, said)
+       if c != f or not t.agrees(w, cmd.split(" 2>/dev/null; ", 1)[1] if cmd.startswith("cd -- ") else cmd)]
+print(len(got), "ok" if said and len(got) == len(said) and not bad else f"{len(said)} shown; {bad[:2]}")' "$sess" <<< "$dry")"
+      if [ "$dry" = "$logged" ] && [ "${match#* }" = ok ]; then
+        ok "--dry-run, the log and the session file agree on all ${match% *} panes"
+      else fail "dry-run vs session: $match; dry-run and log differ: $(diff <(echo "$dry") <(echo "$logged") | head -4 | tr '\n' ' ')"; fi
+      # the sidebar's agent marks come back (omp in tab 3, Claude in 12 and 13): resumed agents run
+      # under launch --hold (kitten, then bash -lc, then the agent: one process group led by
+      # kitten), tab 12's under kitten run-shell
+      marks=""
+      for i in 2 11 12 0 2 11 12 0 2 11 12; do
+        k focus-tab --match "index:$i"; sleep 0.8
+        marks="$(sed -n 's/^agents: //p' "$NL_TEST_DIR/state/sidebar.txt" 2>/dev/null)"
+        grep -qw "3:π" <<< "$marks" && grep -qw "12:✳" <<< "$marks" && grep -qw "13:✳" <<< "$marks" && break
+      done
+      if grep -qw "3:π" <<< "$marks" && grep -qw "12:✳" <<< "$marks" && grep -qw "13:✳" <<< "$marks"; then
+        ok "restored agents keep their sidebar marks (omp π, Claude ✳; $marks)"
+      else fail "agent marks after the restart: '$marks' (want 3:π 12:✳ 13:✳)"; fi
+      # a second restart from here brings the restored agents back again, each in its folder
+      # (kitty reports kitten's folder for tab 12 while its Claude runs: kitten run-shell --cwd says)
+      dry2="$(bash scripts/test-kitty.sh relaunch --dry-run 2>&1)"
+      if grep -A1 -F "/split/\$HOME x" <<< "$dry2" | grep -q "claude --resume dollar-1" \
+          && grep -A1 -E "/split/d$" <<< "$dry2" | grep -q "claude --resume abc-456" \
+          && grep -A1 -E "/split/b$" <<< "$dry2" | grep -q "claude --resume abc-123"; then
+        ok "a second restart would resume the restored agents, each in its folder"
+      else fail "second restart's plan: $(grep -B1 'claude' <<< "$dry2" | tr '\n' ' ')"; fi
+      # restored shells are kitty's own, with shell integration: prompt marks, so the last
+      # command's output can be read back (Ctrl+Shift+G); and so is the shell an agent leaves
+      # behind when it exits (tab 13: --hold; tab 12: kitten run-shell in the $ folder)
+      wins="$(k ls | python3 -c 'import json, sys
+for t in json.load(sys.stdin)[0]["tabs"]:
+    for w in t["windows"]:
+        if w["cwd"].endswith(("/split/a", "/split/c", "/code/notes")): print(w["id"], w["cwd"]); break' | head -3)"
+      for i in 11 12; do k send-text --match "id:$(wid $i)" $'\x04'; done; sleep 1.5      # the Claude stubs exit
+      integrated=0; checked=0; why=""
+      while read -r id _; do
+        [ -n "$id" ] || continue
+        checked=$((checked + 1))
+        k send-text --match "id:$id" $'echo nl-marker-$((6*7))\n'; sleep 0.6
+        got="$(k get-text --match "id:$id" --extent last_cmd_output)"
+        if [ "$got" = nl-marker-42 ]; then integrated=$((integrated + 1)); else why="$why $id:'$got'"; fi
+      done <<< "$(printf '%s\n' "$wins"; echo "$(wid 11) tab-12"; echo "$(wid 12) tab-13")"
+      held="$(k ls | python3 -c 'import json, sys
+t = json.load(sys.stdin)[0]["tabs"]; print(t[11]["windows"][0]["cwd"].endswith("/split/$HOME x"), t[12]["windows"][0]["at_prompt"])')"
+      if [ "$checked" -ge 4 ] && [ "$integrated" = "$checked" ] && [ "$held" = "True True" ]; then
+        ok "restored shells have kitty's shell integration ($integrated shells: last command output read back, the agents' too)"
+      else fail "shell integration after the restart: $integrated of $checked;$why; \$ tab in its folder / at prompt: $held"; fi
+      # and the sidebar (and the search box, same rule) names restored plain shells by their folder
       names="$(k ls | python3 -c 'import importlib.util, json, os, sys
 spec = importlib.util.spec_from_file_location("tf", "config/tab-finder.py"); tf = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tf)
 data = json.load(sys.stdin); rows = tf.rows(data)
 plain = [(r["name"], os.path.basename(next(w for w in t["windows"] if w["is_active"])["cwd"]))
          for r, t in zip(rows, data[0]["tabs"])
-         if not t.get("title_overridden") and all(w["title"] == "bash" for w in t["windows"])]
+         if not t.get("title_overridden") and len(t["windows"]) == 1 and t["windows"][0].get("at_prompt")]
 print(len(plain), "ok" if plain and all(n == f for n, f in plain) else plain)')"
-      if [ "${names#* }" = ok ]; then ok "restarted plain shells (titled \"bash\") are named by their folder (${names% *} tabs)"
+      if [ "${names#* }" = ok ]; then ok "restarted plain shells are named by their folder (${names% *} tabs)"
       else fail "restarted plain shells' names: $names"; fi
       # the restart's own marker must not reach the new kitty (it did once: the next restart from a
       # tab then ran in the foreground and died with the old kitty)

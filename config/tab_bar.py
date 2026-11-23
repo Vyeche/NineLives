@@ -142,14 +142,31 @@ AGENT_TTL = 3.0
 _agents: dict = {}           # tab id -> (checked at, mark)
 
 
-def _foreground_name(w) -> str:
-    """The program in the window's foreground (node/bun: the script it runs, e.g. claude)."""
-    try:
-        pg = os.tcgetpgrp(w.child.child_fd)
-        with open(f"/proc/{pg}/cmdline", "rb") as f:
-            argv = [a.decode(errors="ignore") for a in f.read().split(b"\0") if a]
-    except Exception:
-        return ""
+def _proc_argv(pid) -> list:
+    with open(f"/proc/{pid}/cmdline", "rb") as f:
+        return [a.decode(errors="ignore") for a in f.read().split(b"\0") if a]
+
+
+def _proc_children(pid) -> list:
+    """pid's child processes. Each thread keeps its own list (kitten is a Go program: it starts
+    the command from whichever thread runs), so all of them are read."""
+    out = []
+    for t in os.listdir(f"/proc/{pid}/task"):
+        try:
+            with open(f"/proc/{pid}/task/{t}/children") as f:
+                out += [int(c) for c in f.read().split()]
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def _proc_pgrp(pid) -> int:
+    with open(f"/proc/{pid}/stat", "rb") as f:          # "pid (comm) state ppid pgrp …"; comm may hold ")"
+        return int(f.read().rsplit(b")", 1)[1].split()[2])
+
+
+def _program(argv) -> str:
+    """The program an argv runs (node/bun: the script it runs, e.g. claude)."""
     if not argv:
         return ""
     name = os.path.basename(argv[0])
@@ -162,6 +179,55 @@ def _foreground_name(w) -> str:
                 return "claude" if "claude-code" in a else base
         script = next((a for a in argv[1:] if not a.startswith("-")), "")
         name = os.path.basename(script)
+    return name
+
+
+# A foreground group led by one of these can have the agent below it, in the same group: a tab
+# kitty-relaunch reopened (launch --hold: kitten run-shell, then bash -lc 'claude --resume …'), any
+# `bash -c 'claude …'`, or a command kitty's own session restore runs as the shell starts. (A shell
+# at its prompt gives each command a group of its own, led by the command.)
+LOOK_BELOW = {"bash", "sh", "zsh", "fish", "dash", "kitten"}
+LOOK_LIMIT = 24             # processes looked at below the leader, at most
+
+
+def _agent_below(pg) -> str:
+    """The first agent among the leader's descendants in its process group, or "". A few small
+    reads of /proc/<pid>/task/*/children, not a scan of all of /proc (this runs from draw code)."""
+    todo, seen = [pg], 0
+    while todo and seen < LOOK_LIMIT:
+        try:
+            kids = _proc_children(todo.pop(0))
+        except OSError:
+            continue
+        for k in kids:
+            seen += 1
+            if seen > LOOK_LIMIT:
+                break
+            try:
+                if _proc_pgrp(k) != pg:         # a background job: not what the tab shows
+                    continue
+                name = _program(_proc_argv(k))
+            except (OSError, ValueError, IndexError):
+                continue
+            if name in AGENT_MARK:
+                return name
+            todo.append(k)
+    return ""
+
+
+def _foreground_name(w) -> str:
+    """The program in the window's foreground (node/bun: the script it runs, e.g. claude). When a
+    shell or kitten leads the foreground group, an agent it runs (same group) counts instead."""
+    try:
+        pg = os.tcgetpgrp(w.child.child_fd)
+        name = _program(_proc_argv(pg))
+    except Exception:
+        return ""
+    if name.lstrip("-") in LOOK_BELOW:
+        try:
+            return _agent_below(pg) or name
+        except Exception:
+            return name
     return name
 
 
@@ -374,8 +440,8 @@ def _renamed(tab_id) -> bool:
 def _tab_name(title: str, wd: str, tab_id=None) -> str:
     # A plain shell's title is its folder ("~/…", "/…", "user@host: …"): show the folder's name.
     # So is a bare shell name: with nothing setting a title kitty names the window after its program,
-    # "bash", as in a plain tab kitty-relaunch reopened (`bash -lc 'exec bash'` gets no shell
-    # integration). A tab you renamed "bash" yourself keeps that name.
+    # "bash" (a shell without kitty's shell integration, which sets no title). A tab you renamed
+    # "bash" yourself keeps that name.
     if title[:1] in ("", "~", "/") or (USER_AT != "@" and title.startswith(USER_AT)) or (
             title.strip().lstrip("-") in SHELL_NAMES and not _renamed(tab_id)):
         return wd.rstrip("/").rsplit("/", 1)[-1] or "/"
@@ -1264,15 +1330,19 @@ _layout_noted: dict = {}      # os window id -> what it shows
 
 
 def _note_layout(bar, data, shown_ids, hidden) -> None:
-    """sidebar.txt in the state folder: which tabs the active kitty window's sidebar shows, and where
-    the "hidden" line is, written when it changes (check.sh reads it to test a short window; it's
-    also handy when a tab seems to be missing)."""
+    """sidebar.txt in the state folder: which tabs the active kitty window's sidebar shows, which
+    agent marks they have, and where the "hidden" line is, written when it changes (check.sh reads
+    it to test a short window and restored agents; it's also handy when a tab seems to be missing)."""
     try:
         wid = getattr(bar, "os_window_id", 0)
         nums = {t.tab_id: n for n, t in enumerate((t for t in data if t.tab_id > 0), 1)}
         marks = [("❯" if t.tab_id == SEARCH_ROW_ID else "+" if t.tab_id < 0 else str(nums[t.tab_id]))
                  for t in data if t.tab_id in shown_ids]
         text = f"shown: {' '.join(marks)}\nhidden: {_number_ranges(hidden) or 'none'}\n"
+        # the agent marks drawn under the status icons (from their cache: no /proc reads here)
+        agents = [f"{nums[t.tab_id]}:{_agents[t.tab_id][1]}" for t in data
+                  if t.tab_id in shown_ids and t.tab_id > 0 and _agents.get(t.tab_id, (0, ""))[1]]
+        text += f"agents: {' '.join(agents) or 'none'}\n"
         info = getattr(bar, "_vye_hidden", None)
         g = bar.window_geometry
 

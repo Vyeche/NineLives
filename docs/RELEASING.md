@@ -99,3 +99,24 @@ gh release create v1.0.0 --repo Vyeche/NineLives --title "NineLives 1.0.0" \
   --notes "First public release. Install: see the README."
 ```
 SECURITY.md supports the latest release and `main`.
+
+## 9. Every release after that
+Work happens in the private workbench; GitHub mirrors it.
+1. **Workbench:** commit, `bash scripts/check.sh` green, push.
+2. **Sync:** on a `release/vX.Y.Z` branch in the public clone,
+   `bash scripts/sync-public.sh <public clone> -m "…"` (it stops on private words; commit messages
+   keep `Co-Authored-By` but no session links).
+3. **Pull request** from the bot account (vyeduo): push the branch, `gh pr create`, then comment
+   `@coderabbitai review` (CodeRabbit only reviews by itself once the repo has 10 stars). Answer its
+   findings.
+4. **Merge** once the Gauntlet's `required` check is green, then on `main`:
+   `gh release create vX.Y.Z --target main --title "NineLives X.Y.Z" --notes-file notes.md`, and tag
+   the same workbench commit `vX.Y.Z`. Publish the wiki if docs changed.
+5. **Announce** every release (no "Generated with" footers):
+   - **GitHub Discussions → Announcements:** what changed for users, how to update
+     (`git pull && bash scripts/install.sh`, then `bash scripts/kitty-relaunch.sh --when-idle`).
+   - **X:** one post, under 280 characters, with the release link.
+   - **LinkedIn:** a short post: the one change people will notice, the release link.
+   - Bigger releases: a post on the owner's blog (Yoast all green) and, when the look changed, a new
+     YouTube Short (`tools/short/`).
+   Small fix releases can be announced together with the next one.
