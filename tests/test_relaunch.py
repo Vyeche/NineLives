@@ -3,10 +3,15 @@
 kitty to restart (KITTY_LISTEN_ON), going into the background with a clean environment.
 Everything kitty does is faked: a stub `kitty` first on PATH answers only on unix:@fake and logs
 every call, and the "old kitty" is a throwaway process, so no real kitty is ever contacted.
+MacLike runs it as on macOS (uname says Darwin; no setsid, flock or systemctl on PATH); on a Mac,
+NormalRestart is that for real (no /proc there: kitty's pid comes from ps).
     python3 tests/test_relaunch.py"""
 import json
 import os
+import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -17,8 +22,8 @@ RELAUNCH = os.path.join(HERE, "..", "scripts", "kitty-relaunch.sh")
 FAKE_KITTY = r"""#!/bin/bash
 D="$(dirname "$0")/.."
 echo "$*" >> "$D/calls"
-alive() { [ -e "$D/started" ] && return 0
-  local p; p="$(cat "$D/helper.pid")"; [ -d "/proc/$p" ] && ! grep -q '^[^)]*) Z' "/proc/$p/stat"; }
+alive() { [ -e "$D/started" ] && return 0      # (gone, or a zombie its parent hasn't reaped yet)
+  local p; p="$(cat "$D/helper.pid")"; kill -0 "$p" 2>/dev/null && ! ps -o stat= -p "$p" | grep -q Z; }
 case "$1" in
   @)  [ "$2" = --to ] && [ "$3" = "unix:@fake" ] || { echo "WRONG SOCKET: $*" >> "$D/calls"; exit 1; }
       alive || exit 1
@@ -36,6 +41,12 @@ def read(path):
         return f.read()
 
 
+def write_exe(path, text):
+    with open(path, "w") as f:
+        f.write(text)
+    os.chmod(path, 0o755)
+
+
 class NormalRestart(unittest.TestCase):
     SYSTEMCTL = "#!/bin/sh\nprintf 'HOME=x\\nPATH=x\\n'\n"   # the desktop's variables: only these survive
 
@@ -44,18 +55,21 @@ class NormalRestart(unittest.TestCase):
         d = self.d = self.tmp.name
         os.makedirs(f"{d}/bin")
         os.makedirs(f"{d}/home")
-        with open(f"{d}/bin/kitty", "w") as f:
-            f.write(FAKE_KITTY)
-        with open(f"{d}/bin/systemctl", "w") as f:
-            f.write(self.SYSTEMCTL)
-        for n in ("kitty", "systemctl"):
-            os.chmod(f"{d}/bin/{n}", 0o755)
+        self.fake_kitty = FAKE_KITTY.replace('D="$(dirname "$0")/.."', f'D="{d}"')   # wherever it lives
+        write_exe(f"{d}/bin/kitty", self.fake_kitty)
+        if self.SYSTEMCTL is not None:
+            write_exe(f"{d}/bin/systemctl", self.SYSTEMCTL)
         # the "old kitty": a process named kitty (bash under that name: the restart looks for a
-        # process called kitty above a window's) whose child stands in for the shell in its window
+        # process called kitty above a window's) whose child stands in for the shell in its window.
+        # (macOS: a copy, so ps names it kitty whether it reports the program or its first argument)
         os.makedirs(f"{d}/old")
-        os.symlink("/bin/bash", f"{d}/old/kitty")
-        subprocess.run(["bash", "-c", f'setsid "{d}/old/kitty" -c \'echo $$ > "{d}/helper.pid"; sleep 60 & '
-                        f'echo $! > "{d}/child.pid"; wait\' >/dev/null 2>&1 < /dev/null &'], check=True)
+        if sys.platform == "darwin":
+            shutil.copy("/bin/bash", f"{d}/old/kitty")
+        else:
+            os.symlink("/bin/bash", f"{d}/old/kitty")
+        self.helper = subprocess.Popen(
+            [f"{d}/old/kitty", "-c", f'echo $$ > "{d}/helper.pid"; sleep 60 & echo $! > "{d}/child.pid"; wait'],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         for _ in range(50):
             if os.path.exists(f"{d}/child.pid") and read(f"{d}/child.pid").strip():
                 break
@@ -73,12 +87,17 @@ class NormalRestart(unittest.TestCase):
                 os.kill(int(read(f"{self.d}/{n}")), 15)
             except (OSError, ValueError):
                 pass
+        self.helper.wait(timeout=10)
         self.tmp.cleanup()
+
+    def path(self):
+        return f"{self.d}/bin:/usr/bin:/bin"
 
     def test_restarts_the_kitty_it_runs_in_from_the_background(self):
         d = self.d
-        env = {"PATH": f"{d}/bin:/usr/bin:/bin", "HOME": f"{d}/home", "KITTY_LISTEN_ON": "unix:@fake",
-               "XDG_CACHE_HOME": f"{d}/cache", "XDG_RUNTIME_DIR": f"{d}/run"}
+        env = {"PATH": self.path(), "HOME": f"{d}/home", "KITTY_LISTEN_ON": "unix:@fake",
+               "XDG_CACHE_HOME": f"{d}/cache", "XDG_RUNTIME_DIR": f"{d}/run",
+               "CLAUDE_CODE_CHILD_SESSION": "1", "LC_ALL": "C"}
         r = subprocess.run(["bash", RELAUNCH], env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("running in the background", r.stdout)
@@ -98,6 +117,7 @@ class NormalRestart(unittest.TestCase):
         leaks = getattr(self, "leaks", ("_KR_SOCK=", "_KR_CACHE=", "_KR_DETACHED=", "KITTY_LISTEN_ON=", "XDG_CACHE_HOME="))
         for leak in leaks:
             self.assertNotIn("\n" + leak, "\n" + started_env, leak)
+        self.started_env, self.log = started_env, text
 
 
 
@@ -108,7 +128,99 @@ class NoSystemdUserManager(NormalRestart):
 
     def test_restarts_the_kitty_it_runs_in_from_the_background(self):
         self.leaks = ("_KR_SOCK=", "_KR_CACHE=", "_KR_DETACHED=")     # nothing is cleaned up here
+        if sys.platform == "darwin":                  # (on a Mac it keeps what a Mac app gets)
+            self.leaks += ("CLAUDE_CODE_CHILD_SESSION=", "KITTY_LISTEN_ON=")
         super().test_restarts_the_kitty_it_runs_in_from_the_background()
+
+
+# what kitty-relaunch.sh and the fake kitty above run, for a PATH without setsid, flock and systemctl
+TOOLS = ("bash", "sh", "python3", "dirname", "readlink", "mkdir", "date", "grep", "cut", "tr", "nohup",
+         "seq", "sleep", "rm", "mv", "cat", "env", "touch", "ps", "head", "tail", "sed", "awk", "basename")
+
+
+class MacLike(NormalRestart):
+    """As on macOS: uname says Darwin, and PATH has no setsid, flock or systemctl. python3 detaches
+    and locks instead, and the new kitty gets only what a Mac app gets from the system (launchd),
+    plus the locale and PATH."""
+    SYSTEMCTL = None
+    MAC_KEEP = {"HOME", "USER", "LOGNAME", "SHELL", "PATH", "TMPDIR", "LANG", "SSH_AUTH_SOCK",
+                "__CF_USER_TEXT_ENCODING", "__CFBundleIdentifier", "COMMAND_MODE", "SECURITYSESSIONID",
+                "XPC_FLAGS", "XPC_SERVICE_NAME", "LaunchInstanceID",
+                "LC_ALL", "PWD", "SHLVL", "_", "OLDPWD"}        # (the last four: bash's own)
+
+    def setUp(self):
+        super().setUp()
+        tools = {t: shutil.which(t) for t in TOOLS}
+        if not all(tools.values()):
+            self.skipTest(f"missing: {[t for t, p in tools.items() if not p]}")
+        os.makedirs(f"{self.d}/sys")
+        for t, p in tools.items():
+            os.symlink(p, f"{self.d}/sys/{t}")
+        write_exe(f"{self.d}/sys/uname", "#!/bin/sh\necho Darwin\n")
+        # macOS's /usr/bin/python3 is an xcrun shim that adds SDKROOT, CPATH, LIBRARY_PATH and
+        # MANPATH to the environment of the python it starts (seen on the Gauntlet's macOS runner):
+        # none of them may reach the new kitty through the python3 that detaches it. On a Mac the
+        # real one is that shim (and a made-up SDKROOT would break it), so the fake only stands in
+        # for it elsewhere.
+        if sys.platform != "darwin":
+            os.remove(f"{self.d}/sys/python3")
+            write_exe(f"{self.d}/sys/python3", "#!/bin/sh\nSDKROOT=/sdk CPATH=/sdk/include LIBRARY_PATH=/sdk/lib "
+                      f'MANPATH=/sdk/man; export SDKROOT CPATH LIBRARY_PATH MANPATH\nexec "{tools["python3"]}" "$@"\n')
+        # BSD date has no %N: it prints a plain N (which once made the detached copy detach again)
+        os.remove(f"{self.d}/sys/date")
+        write_exe(f"{self.d}/sys/date", f'#!/bin/sh\nf=$(printf %s "$1" | sed s/%N/N/)\nshift\nexec "{tools["date"]}" "$f" "$@"\n')
+
+    def path(self):
+        return f"{self.d}/bin:{self.d}/sys"
+
+    def test_restarts_the_kitty_it_runs_in_from_the_background(self):
+        self.leaks = ("_KR_SOCK=", "_KR_CACHE=", "_KR_DETACHED=", "KITTY_LISTEN_ON=", "XDG_CACHE_HOME=",
+                      "CLAUDE_CODE_CHILD_SESSION=")
+        super().test_restarts_the_kitty_it_runs_in_from_the_background()
+        names = {l.split("=", 1)[0] for l in self.started_env.splitlines() if "=" in l}
+        self.assertLessEqual(names, self.MAC_KEEP)
+        self.assertIn("LC_ALL", names)
+        self.assertNotIn("already running", self.log)
+
+
+class MacAppBundle(MacLike):
+    """kitty only in ~/Applications/kitty.app (not on PATH, as outside kitty's own tabs on a Mac):
+    the restart finds it there and starts the new kitty from it."""
+    def setUp(self):
+        super().setUp()
+        app = f"{self.d}/home/Applications/kitty.app/Contents/MacOS"
+        os.makedirs(app)
+        os.remove(f"{self.d}/bin/kitty")
+        write_exe(f"{app}/kitty", self.fake_kitty)
+
+    def test_restarts_the_kitty_it_runs_in_from_the_background(self):
+        super().test_restarts_the_kitty_it_runs_in_from_the_background()
+        self.assertIn("done: kitty 9.9.9", self.log)
+
+
+
+class NoFlock(unittest.TestCase):
+    """Where there is no flock(1) (macOS), kitty-relaunch.sh locks with python3's fcntl.flock."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_the_lock_without_flock_lets_one_restart_through(self):
+        # the python3 lock from the script, on fd 9 of two shells: the second is turned away while
+        # the first holds it (after its python3 has exited: the lock stays with the shell's fd)
+        line = next(l for l in read(RELAUNCH).splitlines() if "fcntl.flock(9" in l)
+        py = re.search(r"python3 -c '([^']+)'", line).group(1)
+        lock = f"{self.tmp.name}/lock"
+        first = subprocess.Popen(["bash", "-c", f"exec 9>'{lock}'; python3 -c '{py}' && echo got; sleep 3"],
+                                 stdout=subprocess.PIPE, text=True)
+        time.sleep(1)
+        second = subprocess.run(["bash", "-c", f"exec 9>'{lock}'; python3 -c '{py}' 2>/dev/null && echo got || echo busy"],
+                                capture_output=True, text=True, timeout=10)
+        first.kill()
+        self.assertEqual(first.communicate()[0].strip(), "got")
+        self.assertEqual(second.stdout.strip(), "busy")
 
 
 if __name__ == "__main__":

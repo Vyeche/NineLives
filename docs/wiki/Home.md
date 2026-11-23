@@ -1,7 +1,7 @@
 # NineLives
 
-A kitty terminal setup for Linux (built on Pop!_OS COSMIC, Wayland), for watching many AI coding sessions at
-once. Every session is a tab in a left sidebar with a live status icon; a quiet sound and a small cat
+A kitty terminal setup for Linux (built on Pop!_OS COSMIC, Wayland; [macOS](Installing#macos) is new and
+not yet tried on a real Mac), for watching many AI coding sessions at once. Every session is a tab in a left sidebar with a live status icon; a quiet sound and a small cat
 tell you when a tab finishes or needs you; tabs drag to reorder; and one script restarts kitty and
 brings every tab back. Nine lives, one cat.
 

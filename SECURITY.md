@@ -7,13 +7,15 @@ NineLives is a kitty configuration. Everything runs locally, as you, on your own
 - **Inside kitty:** `config/kitty.conf` and `config/tab_bar.py`, which kitty loads as Python into its
   own process to draw the sidebar. It reads tab titles, folders and program status from kitty, writes
   quest progress to `~/.local/state/ninelives/`, plays sounds with `paplay` and sends notifications
-  over the local D-Bus session bus (`gdbus`).
+  over the local D-Bus session bus (`gdbus`); on macOS with `afplay` and `osascript` (the
+  notification's text is passed to `osascript` as arguments, never as part of its script).
 - **Shell scripts and helpers** you run yourself: `scripts/install.sh`, `scripts/uninstall.sh`,
   `scripts/kitty-relaunch.sh` (with `scripts/kitty-tabs.py`), `config/tips.sh` (sourced by your
-  `~/.bashrc`), `config/shortcuts.sh` and `config/tab-finder.py`.
+  `~/.bashrc` or `~/.zshrc`), `config/shortcuts.sh` and `config/tab-finder.py`.
 - **Remote control:** `kitty.conf` turns on kitty's remote control over a socket only
   (`allow_remote_control socket-only`), at `$XDG_RUNTIME_DIR/ninelives-kitty-<pid>`, a folder only
-  your user can open. The restart script uses it to read and reopen your tabs.
+  your user can open (on macOS, which has no `XDG_RUNTIME_DIR`, in your temp folder `$TMPDIR`,
+  which is private to you too). The restart script uses it to read and reopen your tabs.
 
 NineLives makes **no network connections at runtime** and has no server, account or telemetry. The
 only network use is in maintainer tools: `scripts/publish-wiki.sh` (a `git push` of the wiki) and

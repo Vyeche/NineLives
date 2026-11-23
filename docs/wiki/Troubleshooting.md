@@ -20,7 +20,7 @@ command. Answer or finish those, or restart now without `--when-idle`.
 - Muted? `ls ~/.config/kitty/sounds-off` (Ctrl+Alt+M or `kitty-sounds on`).
 - Volume set very low? `kitty-sounds volume` shows it.
 - The tab you're looking at doesn't chime when it finishes or fails: that's on purpose.
-- `kitty-sounds` plays each sound; if that is silent too, check `paplay` and the system volume.
+- `kitty-sounds` plays each sound; if that is silent too, check `paplay` and the system volume (on a Mac: `afplay ~/.config/kitty/sounds/done.wav`, and see [On a Mac](#on-a-mac)).
 - Sounds missing from `~/.config/kitty/sounds/`? Re-run `bash scripts/install.sh`. Without them it falls back to the desktop's sounds.
 
 ### Sounds too loud or too quiet
@@ -59,3 +59,13 @@ kitty's `TERM` is `xterm-kitty`. Uncomment `force_color_prompt=yes` near the top
 - A plain tab spins while any command is in the foreground (but not vim, less, htop or an idle agent).
 - omp/opencode count as working while their title has a spinner.
 - ✓ stays until you look at the tab.
+
+### On a Mac
+macOS support is new and untested on real hardware; please [report](https://github.com/Vyeche/NineLives/issues)
+what you see, with the output of `bash scripts/check-macos.sh` (it leaves your config alone; it opens and restarts a test kitty window of its own, sends one test notification and plays one near-silent sound).
+- **No sound:** the sounds need their `.wav` copies (`ls ~/.config/kitty/sounds/*.wav`); `bash scripts/install.sh` makes them.
+- **No badge notification:** they come through `osascript`, which macOS may list as "Script Editor" in System Settings → Notifications; allow it there.
+- **The restart says "no kitty to restart":** kitty reads `ninelives-macos.conf` (its socket in `$TMPDIR`) only when it starts: quit it with ⌘Q (closing the window isn't enough on a Mac) and open it again.
+- **A dialog asks to install the Command Line Tools** when something runs `python3`: install them, or Homebrew's `python3`.
+- **The font looks different:** DejaVu Sans Mono isn't on a Mac by default, and kitty uses Menlo; `brew install --cask font-dejavu` for the COSMIC look.
+- **Ctrl+Alt shortcuts:** use Ctrl+Option (kitty reads Option as Alt in its shortcuts). F1 may need Fn; Ctrl+Shift+/ opens the sheet too.

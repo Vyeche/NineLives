@@ -11,6 +11,7 @@ It checks:
 - **Install:** into a temp folder, with kitty's config check, and every file arrives.
 - **Sounds:** all six are present and on their loudness targets.
 - **Links:** every wiki and README link resolves.
+- **Live processes:** `tests/live_agent_lookup.py`, run with kitty's own Python (`kitty +launch`), starts bash in a terminal of its own with a fake agent (sleep under the name `claude`) below it, and checks `tab_bar.py` finds it, through its Linux branch (`/proc`) and its macOS branch (`kitty.child`, which reads `/proc` on Linux too).
 - **A hidden test kitty:** no errors in its log, "needs you" plays, `kitty-relaunch.sh --status` sees working and waiting tabs, a shortcut earns its badge, the sidebar's buttons and the short-window list work. In an 860 px window and at font size 20 (both make kitty's sidebar narrower) it checks the search row stays whole, that the button columns in `sidebar.txt` are where kitty drew `⚠`, `+` and `×`, and clicks them. Last, it splits three tabs (nested splits with a Claude pane, a renamed tab, a zoomed tab), restarts the test kitty with `kitty-relaunch.sh` and checks every tab comes back with the same panes, folders, layout, split sizes, active pane and name (one Claude tab sits in a folder named `$HOME x`); that `--dry-run`, the log and the session file list the same panes; that resumed omp and Claude tabs keep their sidebar marks (`agents:` in `sidebar.txt`); that restored shells, and the shell a resumed agent leaves when it exits, have kitty's shell integration (the last command's output reads back); and that restored plain shells are named by their folder.
 
 It also saves a sidebar screenshot to `/tmp/ninelives-check.png`. Run it before every commit.
@@ -29,6 +30,7 @@ python3 -m unittest discover -s tests -v
   - quests and rank-ups
   - loading cleanly when kitty internals are missing (as after a kitty update)
   - the agent mark for an agent below a shell or kitten in the same process group (a restored tab), with a fake `/proc`
+  - the macOS paths (class `MacOS`): `afplay` and the `.wav` sounds at the Linux level, macOS's own sounds for classic, `osascript` with the text as arguments, and the agent marks from a fake `kitty.child` (one process scan for every tab, never `/proc`)
 - **`tests/test_kitty_tabs.py`** feeds fake `kitty @ ls` output to `scripts/kitty-tabs.py`. It checks:
   - what `kitty-relaunch.sh` reopens: Claude with and without a session id, Claude started through node, omp, renamed tabs, the active tab
   - how: shells with no command (kitty's own, with shell integration), agents under `--hold`, folders with a `$` through `kitten run-shell`, an agent in its own process's folder
@@ -36,13 +38,33 @@ python3 -m unittest discover -s tests -v
   - split tabs: the session file's layout state, every pane's folder and command, the active pane, overlays, zoomed tabs, and the one-pane fallback when kitty gives no layout state
   - which tabs `--when-idle` waits for
   - which kitty a restart picks: the one it runs in, then any other with a socket, never the test or dev kitty
-- **`tests/test_relaunch.py`** runs `kitty-relaunch.sh` the way you do (from a tab, no `NL_KITTY_SOCKET`) against a stub `kitty` and a throwaway "old kitty" process: it picks the kitty it runs in, goes into the background with a clean environment, and starts the new kitty on the same socket without handing on its own internals.
-- **`tests/test_install.py`** runs `scripts/install.sh` and `scripts/uninstall.sh` on a temp folder: which backups are kept, and that uninstalling removes only NineLives' files and puts your own config back.
-- **`tests/test_tips.py`** sources `config/tips.sh` in bash with a temp config folder and a stub `paplay`. It covers:
+  - macOS: kitty's pid and the running kittys from `ps` (fake listings, then the real `ps`), sockets in the temp folder
+- **`tests/test_relaunch.py`** runs `kitty-relaunch.sh` the way you do (from a tab, no `NL_KITTY_SOCKET`) against a stub `kitty` and a throwaway "old kitty" process: it picks the kitty it runs in, goes into the background with a clean environment, and starts the new kitty on the same socket without handing on its own internals. `MacLike` does it as on macOS: `uname` says Darwin, `date` has no `%N`, and there is no `setsid`, `flock` or `systemctl` (python3 detaches and locks).
+- **`tests/test_install.py`** runs `scripts/install.sh` and `scripts/uninstall.sh` on a temp folder: which backups are kept, and that uninstalling removes only NineLives' files and puts your own config back; on "macOS" (a stub `uname`) the `.wav` sounds come and go. With kitty installed, kitty's own parser reads `kitty.conf` as on Linux (the socket unchanged) and as on macOS (`ninelives-macos.conf`), and the macOS Ctrl+Alt+M runs with a stub `afplay`.
+- **`tests/test_tips.py`** sources `config/tips.sh` in bash with a temp config folder and a stub `paplay` (and `afplay` for the macOS path), and again in zsh where there is one. It covers:
   - `kitty-sounds`: volume, off/on, classic, and the preview playing each sound at the set volume
   - `kitty-cat`, `kitty-quests` and `kitty-tips` switches
   - `ninelives` output and its column alignment
   - `kitty-quests` wrapping to the window
+
+## macOS
+`scripts/check-macos.sh` runs on a Mac (the Gauntlet's `macos` lane runs it on GitHub's macOS 15 with
+the official kitty `.dmg`). It uses what a Mac has out of the box: `/bin/bash` 3.2, `/usr/bin/python3`,
+zsh, BSD tools and kitty.app's folder on `PATH`. It runs every unit test (no macOS test may be
+skipped, the zsh ones included), installs and uninstalls into a temp folder with kitty's config check,
+checks where the socket goes, that `afinfo` reads the `.wav` sounds and `osascript` gets the
+notification text unchanged, runs `tests/live_agent_lookup.py` with kitty's macOS helpers, and last,
+on a Mac with a display, starts the real kitty with NineLives' config: its socket, `kitty @ ls`,
+`kitty-tabs.py sockets` and `kitty-pid`, the `✳` mark in `sidebar.txt`, and a restart that brings both
+tabs back. **On the Gauntlet that last part never runs:** GitHub's macOS runners have no OpenGL 3.3
+(kitty asks for a hardware renderer: "NSGL: Failed to find a suitable pixel format"), so it is skipped
+with a warning, and a running kitty on a Mac is untested until someone runs this on a real Mac. It opens a kitty window of its own and restarts it, sends one test notification and plays
+one near-silent sound (your kitty config is left alone). A CI machine is not a Mac on a desk: hearing
+the sounds, seeing notifications, the look on a Mac's screen and dragging tabs are untested, and
+nobody has run NineLives on a real Mac yet.
+```bash
+bash scripts/check-macos.sh [PATH/TO/kitty.app]
+```
 
 ## A dev kitty you can see
 `scripts/dev-kitty.sh` opens a visible "NineLives dev" kitty for trying changes by hand. It has its own config
