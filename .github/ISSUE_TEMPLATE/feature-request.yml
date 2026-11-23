@@ -1,0 +1,29 @@
+name: Idea or feature request
+description: Something NineLives could do better or do next.
+title: "[idea] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        NineLives aims to make a window full of agent sessions easy to watch and fun to learn from
+        (see PRODUCT.md): status at a glance, quiet sounds, nothing that gets in the way.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation, not the solution, e.g. "I miss tabs that finish while I'm in another app".
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+  - type: checkboxes
+    id: fit
+    attributes:
+      label: Fit
+      options:
+        - label: It can be turned off, and it doesn't interrupt a working agent session
+        - label: It would work in kitty 0.50+ on Wayland (COSMIC) and X11

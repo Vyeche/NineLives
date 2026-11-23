@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in NineLives doesn't work the way the docs say.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! The output of `ninelives` (run it in kitty) answers most setup questions,
+        so please paste it below. [Troubleshooting](../wiki/Troubleshooting) covers the common ones.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      options:
+        - sidebar (status icons, names, folders, branch, agent mark)
+        - search row, buttons or tab search (Ctrl+Shift+Space, Ctrl+Alt+U)
+        - sounds
+        - the cat
+        - quests, badges, mastery
+        - tab dragging
+        - restart (kitty-relaunch.sh)
+        - install.sh
+        - F1 sheet, tips, ninelives
+        - docs
+        - something else
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The keys you pressed or the commands you ran, in order.
+    validations:
+      required: true
+  - type: textarea
+    id: ninelives
+    attributes:
+      label: Output of `ninelives`
+      description: It shows your kitty version, config folder and every NineLives setting.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: desktop
+    attributes:
+      label: OS and desktop
+      placeholder: "Pop!_OS 24.04, COSMIC (Wayland)"
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshot or log
+      description: A screenshot of the sidebar, or the end of ~/.cache/ninelives/kitty-relaunch.log for restart problems.
