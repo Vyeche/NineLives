@@ -4,6 +4,7 @@ Changes you'd notice, newest first. To get them: `bash scripts/install.sh`, then
 `bash scripts/kitty-relaunch.sh --when-idle` (see [Installing](Installing)).
 
 ## 2026-11-23
+- **A new YouTube Short:** [watch it](https://youtube.com/shorts/DAjsc_QYrfc). Re-recorded at a bigger font for phones, with the agent marks coming back after the restart, the search box keeping its tab's folder, the whole folder column in the search close-up, and a dimmed frame instead of black while kitty restarts.
 - **Fix: the search box hid its tab's folder.** While the search box (Ctrl+Shift+Space) or the F1 sheet was open, the sidebar described the box instead of your tab: kitty's start folder, no `✳` and no branch. The row now shows the window under the box, and a command running under it keeps spinning (it got a false "done" sparkle).
 - **Fix: a `✳` mark could come back seconds late after a restart.** A tab whose agent was still starting when the new kitty first drew it kept an empty mark until the sidebar happened to redraw (once 6 s). For their first 10 seconds, windows without a mark are looked at again twice a second, and the sidebar redraws as soon as one turns up.
 - **Fix: only the first restart in a row worked.** The kitty that `kitty-relaunch.sh` started kept the restart's lock, so the next restart of it stopped with "another restart is already running". The lock now stays with the restart (under a new name, so a kitty started by the old script restarts fine too).
