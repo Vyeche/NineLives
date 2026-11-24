@@ -31,7 +31,9 @@ case "$1" in
       exit 0 ;;
   +runpy)    exit 0 ;;
   --version) echo "kitty 9.9.9 (fake)"; exit 0 ;;
-  *)  env > "$D/started-env"; echo "$*" > "$D/started-args"; touch "$D/started"; exit 0 ;;
+  *)  env > "$D/started-env"; echo "$*" > "$D/started-args"
+      if { true >&9; } 2>/dev/null; then echo open; else echo closed; fi > "$D/started-fd9"
+      touch "$D/started"; exit 0 ;;
 esac
 """
 
@@ -118,6 +120,9 @@ class NormalRestart(unittest.TestCase):
         args = read(f"{d}/started-args")
         self.assertIn("--listen-on unix:@fake", args)       # the new kitty keeps the address
         self.assertIn("--session", args)
+        # the restart's lock (fd 9) stays with the restart: a new kitty holding it turned every
+        # later restart away ("another restart is already running")
+        self.assertEqual(read(f"{d}/started-fd9").strip(), "closed")
         started_env = read(f"{d}/started-env")
         leaks = getattr(self, "leaks", ("_KR_SOCK=", "_KR_CACHE=", "_KR_DETACHED=", "_KR_NEW=", "KITTY_LISTEN_ON=", "XDG_CACHE_HOME="))
         for leak in leaks:
@@ -126,6 +131,34 @@ class NormalRestart(unittest.TestCase):
         self.assertIn(f"\nKITTY_CONFIG_DIRECTORY={d}/my kitty conf\n", "\n" + started_env)
         self.assertIn(f"\nXDG_CONFIG_HOME={d}/xdg\n", "\n" + started_env)
 
+
+
+class OldLockHeld(NormalRestart):
+    """A kitty started by kitty-relaunch.sh before v1.1.1 kept the restart's lock file open (fd 9)
+    and locked for its whole life, so the next restart of it stopped with "another restart is
+    already running". The lock moved to a new file name for that: a restart must go through while
+    something holds the old one."""
+    OLD_LOCK = "kitty-relaunch.lock"       # the name before v1.1.1 (git show b65e7b0^:scripts/kitty-relaunch.sh)
+
+    def setUp(self):
+        super().setUp()
+        os.makedirs(f"{self.d}/cache/ninelives", exist_ok=True)
+        self.holder = subprocess.Popen(
+            [sys.executable, "-c", "import fcntl, sys, time\n"
+             "f = open(sys.argv[1], 'w'); fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+             "print('held', flush=True); time.sleep(60)", f"{self.d}/cache/ninelives/{self.OLD_LOCK}"],
+            stdout=subprocess.PIPE, text=True)
+        self.assertEqual(self.holder.stdout.readline().strip(), "held")
+
+    def tearDown(self):
+        self.holder.kill()
+        self.holder.wait(timeout=10)
+        self.holder.stdout.close()
+        super().tearDown()
+
+    def test_restarts_the_kitty_it_runs_in_from_the_background(self):
+        super().test_restarts_the_kitty_it_runs_in_from_the_background()
+        self.assertNotIn("another restart is already running", self.log)
 
 
 class NoSystemdUserManager(NormalRestart):

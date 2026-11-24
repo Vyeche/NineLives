@@ -106,7 +106,9 @@ MARK_DIR="$(dirname "$LOG")"
 detached=0
 if [[ "${_KR_DETACHED:-}" =~ ^[0-9-]+$ ]] && [ -e "$MARK_DIR/kitty-relaunch-$_KR_DETACHED.run" ]; then
   detached=1; rm -f "$MARK_DIR/kitty-relaunch-$_KR_DETACHED.run"
-  exec 9>"$MARK_DIR/kitty-relaunch.lock"
+  # (not kitty-relaunch.lock: a kitty started by an older version of this script kept that file's
+  # lock open for its whole life, and restarting it would stop here)
+  exec 9>"$MARK_DIR/kitty-relaunch-run.lock"
   if command -v flock >/dev/null && ! flock -n 9; then
     echo "$(date +%T) another restart is already running; this one stops"; exit 0
   fi
@@ -233,11 +235,13 @@ if [[ "$SOCK" == unix:/* ]] && [ -S "${SOCK#unix:}" ]; then rm -f -- "${SOCK#uni
 # The session file reopens every tab and pane, sets the layouts and split sizes, names the tabs and
 # focuses the pane and tab you were on, all inside kitty (one failed window can't shift a name or
 # the focus onto another tab, so there are no window ids to track).
+# (9>&-: the restart's lock stays here. A kitty that kept fd 9 held the lock for its whole life, and
+# every later restart of it stopped with "another restart is already running".)
 if command -v setsid >/dev/null; then
-  setsid "$NEW" -o allow_remote_control=socket-only --listen-on "$SOCK" --session "$SESSION" >/dev/null 2>&1 < /dev/null &
+  setsid "$NEW" -o allow_remote_control=socket-only --listen-on "$SOCK" --session "$SESSION" >/dev/null 2>&1 < /dev/null 9>&- &
 else
   python3 -c "$DETACH_PY" "$(compgen -e | tr '\n' ' ')" \
-    "$NEW" -o allow_remote_control=socket-only --listen-on "$SOCK" --session "$SESSION" >/dev/null 2>&1 < /dev/null &
+    "$NEW" -o allow_remote_control=socket-only --listen-on "$SOCK" --session "$SESSION" >/dev/null 2>&1 < /dev/null 9>&- &
 fi
 for _ in $(seq 1 50); do kls >/dev/null && break; sleep 0.2; done
 if ! kls >/dev/null; then

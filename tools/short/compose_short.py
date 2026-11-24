@@ -5,8 +5,9 @@
 
 Reads WORK_DIR/take*.meta.json and the takes' .mkv (see capture.sh) and writes a 1080x1920 H.264 +
 AAC MP4 at 30 fps: captions on top, the test kitty's window in the middle (1:1, no scaling), and
-below it a close-up of the sidebar, its pixels doubled, that follows what's happening (the search
-box while it's open). The sounds are NineLives' own (config/sounds), mixed in at the times the test
+below it a close-up that follows what's happening: the sidebar with its pixels doubled, the search
+box (wider, so a little smaller) while it's open. While kitty restarts (the display is black for
+a moment) the last frame before it is held, dimmed. The sounds are NineLives' own (config/sounds), mixed in at the times the test
 kitty's stubs logged them, at the volume it asked for, over an original music bed (music.py, the
 same synth as the sounds; --no-music leaves it out) that ducks under each sound. The mix is raised
 with one static gain (and, only if the peaks need it, a light limiter) to about -14 LUFS with true
@@ -34,7 +35,7 @@ MONO = "DejaVu Sans Mono"
 
 # The cut: which part of each take to keep (seconds; "end" is the take's end event).
 EDIT = [
-    {"take": "take1", "start": 0.0, "end_before": 0.9},
+    {"take": "take1", "start": 0.0, "end_before": 0.5},
     {"take": "take2", "start": 0.0, "end_before": 0.4},
 ]
 END_CARD = 3.6           # seconds
@@ -46,9 +47,14 @@ GITHUB = "github.com/Vyeche/NineLives"
 # the bottom fifth, so nothing important goes right of x≈950 in the lower half or below y≈1536.
 BRAND_Y = 168            # "NineLives" over the captions
 CAPTION_TOP = 214
-APP_Y = 416              # the window: 1080x480 at 1:1
-ZOOM = 2
-CLOSE_Y = 912    # the close-up: up to 400x300 doubled = 800x600, centred (ends at y 1512)
+APP_Y = 400              # the window (capture.sh: 1080x384) at 1:1, under the captions' keycaps
+ZOOM = 2                 # the close-up: its source box as big as fits, 2x at most (crisp pixels at 2x)
+CLOSE_GAP = 16           # between the window and the close-up
+CLOSE_LEFT, CLOSE_RIGHT, CLOSE_BOTTOM = 24, 952, 1536    # where the close-up may go (YouTube's buttons
+                                                          # and title); centred when it fits
+HOLD_DIM = 0.55          # while kitty restarts: the held frame's brightness,
+HOLD_SETTLE = 0.17       # how long it's held after the black (the new window takes a few frames to draw)
+HOLD_FADE = 0.25         # and the fade from it into the new window
 
 BG = (0x0d / 255, 0x0c / 255, 0x12 / 255)
 ORANGE = (0xf0 / 255, 0x88 / 255, 0x1a / 255)
@@ -72,9 +78,60 @@ def load_takes(work: str) -> list:
             meta = json.load(f)
         end = next(ev["t"] for ev in meta["events"] if ev["kind"] == "end")
         t0, t1 = e["start"], end - e["end_before"]
-        segs.append({"meta": meta, "t0": t0, "t1": t1, "at": at, "path": os.path.join(work, meta["video"])})
+        seg = {"meta": meta, "t0": t0, "t1": t1, "at": at, "path": os.path.join(work, meta["video"])}
+        seg["blank"], seg["held"] = blank_spans(seg), {}
+        segs.append(seg)
         at += t1 - t0
     return segs
+
+
+def blank_spans(seg) -> list:
+    """When the display is black while kitty restarts (the old window gone, the new one not yet
+    open), as [(from, to)] in the take's seconds, 'to' plus HOLD_SETTLE. Only looked for around
+    the take's relaunch events."""
+    m = seg["meta"]
+    rel = [ev["t"] for ev in m["events"] if ev["kind"] == "relaunch"]
+    if not rel:
+        return []
+    a, b = max(seg["t0"], min(rel) - 0.2), min(seg["t1"], max(rel) + 1.0)
+    w, h = (v // 8 for v in m["size"])
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", f"{a:.3f}", "-i", seg["path"], "-t", f"{b - a:.3f}",
+                          "-vf", f"fps={FPS},scale={w}:{h}:flags=area", "-pix_fmt", "gray", "-f", "rawvideo", "-"],
+                         capture_output=True, check=True).stdout
+    dark = list(np.frombuffer(raw, np.uint8).reshape(-1, h, w).max(axis=(1, 2)) < 8) + [False]
+    spans, start = [], None
+    for i, d in enumerate(dark):
+        if d and start is None:
+            start = i
+        elif not d and start is not None:
+            spans.append((a + start / FPS, a + i / FPS + HOLD_SETTLE))
+            start = None
+    for s0, s1 in spans:
+        print(f"{m['take']}: black {s0:.2f}-{s1 - HOLD_SETTLE:.2f} s while kitty restarts: holding the frame before it")
+    return spans
+
+
+def take_frame(seg, local: float) -> np.ndarray:
+    """One RGB frame of the take at `local` seconds."""
+    w, h = seg["meta"]["size"]
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", f"{local:.3f}", "-i", seg["path"],
+                          "-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"],
+                         capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.uint8).reshape(h, w, 3)
+
+
+def restart_hold(seg, local: float, frame: np.ndarray) -> np.ndarray:
+    """Instead of black while kitty restarts: the last frame before it, dimming to HOLD_DIM, then a
+    fade into the new window."""
+    for k, (a, b) in enumerate(seg["blank"]):
+        if not (a <= local < b + HOLD_FADE):
+            continue
+        if k not in seg["held"]:
+            seg["held"][k] = take_frame(seg, max(0.0, a - 2 / FPS)).astype(np.float32)
+        held = seg["held"][k] * (1 - (1 - HOLD_DIM) * ease((local - a) / 0.15))
+        u = ease((local - b) / HOLD_FADE) if local >= b else 0.0
+        return np.clip(held * (1 - u) + frame.astype(np.float32) * u, 0, 255).astype(np.uint8)
+    return frame
 
 
 def timeline(segs: list) -> dict:
@@ -93,7 +150,9 @@ def timeline(segs: list) -> dict:
             elif ev["kind"] == "key":
                 keys.append({"t": t, "key": ev["args"]})
             elif ev["kind"] == "focus":
-                focus.append({"t": t, "x": ev["x"], "y": ev["y"], "w": ev.get("w", m["crop"][0]), "seg": s})
+                old = m.get("crop", [400, 300])         # (the first Short's takes: a width at most)
+                box = (ev["x"], ev["y"], ev.get("w", old[0]), ev.get("h", old[1]))
+                focus.append({"t": t, "box": box, "seg": s})
         for snd in m["sounds"]:
             t = snd["t"] + off
             if s["at"] <= t <= s["at"] + (s["t1"] - s["t0"]):
@@ -236,11 +295,12 @@ def draw_brand(cr, alpha=1.0):
 
 
 def focus_at(tl: dict, t: float, seg) -> tuple:
-    """The close-up's source box (x, y, width) at time t: eases 0.45 s to each new one in this take."""
-    full = tl["crop"][0]
-    fs = [(f["t"], f["x"], f["y"], f.get("w", full)) for f in tl["focus"] if f["seg"] is seg]
+    """The close-up's source box (x, y, width, height) at time t: eases 0.45 s to each new one in
+    this take."""
+    fs = [(f["t"],) + tuple(f["box"]) for f in tl["focus"] if f["seg"] is seg]
     if not fs:
-        return 0.0, 0.0, float(full)
+        w, h = seg["meta"]["size"]
+        return 0.0, 0.0, float(w), float(h)
     cur = fs[0][1:]
     for prev, f in zip([None] + fs[:-1], fs):
         if f[0] > t:
@@ -251,6 +311,17 @@ def focus_at(tl: dict, t: float, seg) -> tuple:
         k = ease((t - f[0]) / 0.45)
         cur = tuple(p + (q - p) * k for p, q in zip(prev[1:], f[1:]))
     return cur
+
+
+def closeup_rect(box: tuple, app_h: int) -> tuple:
+    """Where a source box shows: (zoom, x, y, width, height). As big as fits under the window
+    (ZOOM at most), centred, or moved left to keep clear of YouTube's buttons."""
+    bw, bh = box[2], box[3]
+    y = APP_Y + app_h + CLOSE_GAP
+    zoom = min(ZOOM, (CLOSE_RIGHT - CLOSE_LEFT) / bw, (CLOSE_BOTTOM - y) / bh)
+    ow, oh = int(round(bw * zoom)), int(round(bh * zoom))
+    x = max(CLOSE_LEFT, min((W - ow) // 2, CLOSE_RIGHT - ow))
+    return zoom, x, y, ow, oh
 
 
 def segment_at(segs, t):
@@ -298,17 +369,29 @@ def compose(canvas: np.ndarray, surf, frame: np.ndarray, box: tuple, tl, t, extr
     """One output frame into canvas (BGRA, the cairo surface's memory)."""
     fh, fw = frame.shape[:2]
     canvas[APP_Y:APP_Y + fh, 0:fw, :3] = frame[..., ::-1]
-    fx, fy, fw_ = box
-    ch = tl["crop"][1]
-    cw = int(round(fw_))
-    close_x = W // 2 - cw                         # centred, so its right edge stays clear of YouTube's buttons
-    x0, y0 = int(round(fx)), int(round(fy))
+    cw, ch = min(fw, int(round(box[2]))), min(fh, int(round(box[3])))
+    x0, y0 = int(round(box[0])), int(round(box[1]))
     x0, y0 = max(0, min(fw - cw, x0)), max(0, min(fh - ch, y0))
-    crop = frame[y0:y0 + ch, x0:x0 + cw]
-    big = crop.repeat(ZOOM, 0).repeat(ZOOM, 1)
-    canvas[CLOSE_Y:CLOSE_Y + ch * ZOOM, close_x:close_x + cw * ZOOM, :3] = big[..., ::-1]
+    zoom, close_x, close_y, ow, oh = closeup_rect((x0, y0, cw, ch), fh)
     surf.mark_dirty()
     cr = cairo.Context(surf)
+    # the close-up, its corners rounded: at 2x every pixel doubled (crisp), smaller (a wide box)
+    # smoothly scaled
+    src = np.empty((ch, cw, 4), np.uint8)
+    src[..., :3] = frame[y0:y0 + ch, x0:x0 + cw, ::-1]
+    src[..., 3] = 255
+    img = cairo.ImageSurface.create_for_data(memoryview(src), cairo.FORMAT_RGB24, cw, ch, cw * 4)
+    sharp = abs(zoom - ZOOM) < 1e-6 and ow == cw * ZOOM and oh == ch * ZOOM
+    cr.save()
+    rounded(cr, close_x, close_y, ow, oh, 18)
+    cr.clip()
+    cr.translate(close_x, close_y)
+    cr.scale(ow / cw, oh / ch)
+    cr.set_source_surface(img, 0, 0)
+    cr.get_source().set_filter(cairo.FILTER_NEAREST if sharp else cairo.FILTER_BEST)
+    cr.get_source().set_extend(cairo.EXTEND_PAD)
+    cr.paint()
+    cr.restore()
     # the window's edges, and where the close-up comes from
     cr.set_line_width(2)
     cr.set_source_rgba(*EDGE, 1)
@@ -321,24 +404,18 @@ def compose(canvas: np.ndarray, surf, frame: np.ndarray, box: tuple, tl, t, extr
     cr.set_line_width(2.5)
     cr.rectangle(x0 + 1.5, APP_Y + y0 + 1.5, cw - 3, ch - 3)
     cr.stroke()
-    # the close-up's frame (drawn over the doubled pixels' edge, rounded corners masked)
-    cr.set_source_rgba(*BG, 1)
-    cr.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
-    cr.rectangle(close_x - 8, CLOSE_Y - 8, cw * ZOOM + 16, ch * ZOOM + 16)
-    rounded(cr, close_x, CLOSE_Y, cw * ZOOM, ch * ZOOM, 18)
-    cr.fill()
-    cr.set_fill_rule(cairo.FILL_RULE_WINDING)
+    # the close-up's frame
     cr.set_source_rgba(*ORANGE, 0.95)
     cr.set_line_width(3)
-    rounded(cr, close_x, CLOSE_Y, cw * ZOOM, ch * ZOOM, 18)
+    rounded(cr, close_x, close_y, ow, oh, 18)
     cr.stroke()
     # thin guides from the source box to the close-up
     cr.set_source_rgba(*ORANGE, 0.28)
     cr.set_line_width(1.5)
     cr.move_to(x0, APP_Y + y0 + ch)
-    cr.line_to(close_x, CLOSE_Y)
+    cr.line_to(close_x, close_y)
     cr.move_to(x0 + cw, APP_Y + y0 + ch)
-    cr.line_to(close_x + cw * ZOOM, CLOSE_Y)
+    cr.line_to(close_x + ow, close_y)
     cr.stroke()
     draw_brand(cr)
     if extra:
@@ -488,7 +565,6 @@ def mix(tl: dict, work: str, music: bool = True) -> str:
 def render(work: str, out: str, thumb: str = "", preview=None, music: bool = True):
     segs = load_takes(work)
     tl = timeline(segs)
-    tl["crop"] = segs[0]["meta"]["crop"]
     bg = background()
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)
     canvas = np.ndarray((H, W, 4), np.uint8, surf.get_data())
@@ -500,11 +576,7 @@ def render(work: str, out: str, thumb: str = "", preview=None, music: bool = Tru
                 continue
             s = segment_at(segs, t)
             local = s["t0"] + t - s["at"]
-            png = subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", f"{local:.3f}", "-i", s["path"],
-                                  "-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"],
-                                 capture_output=True, check=True).stdout
-            w, h = s["meta"]["size"]
-            frame = np.frombuffer(png, np.uint8).reshape(h, w, 3)
+            frame = restart_hold(s, local, take_frame(s, local))
             canvas[:] = bg
             compose(canvas, surf, frame, focus_at(tl, t, s), tl, t)
             surf.write_to_png(os.path.join(work, f"preview-{t:05.2f}.png"))
@@ -532,7 +604,7 @@ def render(work: str, out: str, thumb: str = "", preview=None, music: bool = Tru
                     old.close()
                 readers.clear()
                 r = readers[id(s)] = Frames(s)
-            frame = r.next()
+            frame = restart_hold(s, s["t0"] + t - s["at"], r.next())
             canvas[:] = bg
             compose(canvas, surf, frame, focus_at(tl, t, s), tl, t)
         else:
@@ -564,10 +636,15 @@ def make_thumb(segs, tl, bg, surf, canvas, path):
                          capture_output=True, check=True).stdout
     frames = np.frombuffer(raw, np.uint8).reshape(-1, h, w, 3)
     # a frame with the waiting tab's pulse on: most amber in the status column and the cat's "!"
-    # (the active tab's orange row, which never changes, is left out)
+    # (the active tab's orange row, which never changes, is left out). Where they are, from the
+    # sidebar's cell grid: the status column is columns 3-5, tab 2 starts on row 5, and the cat sits
+    # on the sidebar box's last row (+ New tab).
+    c = m.get("cells", {"w": 10, "h": 20, "cols": 31})
+    cw, ch = c["w"], c["h"]
+    rows = next((ev["h"] // ch for ev in m["events"] if ev["kind"] == "focus" and ev.get("h")), 15)
     side = frames.astype(np.int16)
-    col = side[:, 80:270, 30:60]               # tabs 2… (tab 1, on screen, is orange throughout)
-    cat = side[:, 270:300, 200:310]
+    col = side[:, 4 * ch:(rows - 1) * ch, 3 * cw:6 * cw]        # tabs 2… (tab 1, on screen, is orange throughout)
+    cat = side[:, (rows - 1) * ch:rows * ch, 18 * cw:c["cols"] * cw]
     def amberish(px):
         return ((px[..., 0] > 150) & (px[..., 0] - px[..., 2] > 60)).sum(axis=(1, 2))
     amber = amberish(col) + amberish(cat)

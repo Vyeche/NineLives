@@ -21,7 +21,16 @@ Animations count ticks (`_frame`), not the clock, so no frame is skipped or show
 **Agent marks** (`✳`, `π`, …) name the program in each tab's foreground. When a shell or `kitten`
 leads the foreground process group (a tab the restart reopened), the agent below it in the same group
 counts: on Linux by reading the leader's children in `/proc`, on macOS from kitty's process-group map
-(one scan of all processes, shared by every tab for a second). Marks are kept 3 seconds.
+(one scan of all processes, shared by every tab for a second). Marks are kept 3 seconds. A window
+the timer first saw under 10 seconds ago that has no mark yet (a restart reopens every tab at once, and
+an agent can still be starting) is looked at again twice a second, and the sidebar redraws only if a
+mark turns up.
+
+**Overlays.** While an overlay is open in a tab (the search box, the F1 sheet), kitty describes the
+tab by the overlay: its folder is kitty's start folder and its program is no agent. The row, its
+mark and the plain-command spinner use the window under it instead (`Tab.active_window_for_cwd`, the
+main window of the overlay's group). The overlays aren't started with `--cwd=current`: from a window
+running the ssh kitten, kitty would run them on the remote host.
 
 **macOS** (new, untested on a real Mac): `IS_MACOS` picks `afplay` and the `.wav` sounds,
 `osascript` notifications (the text as arguments, never in the script) and the process lookups above.
