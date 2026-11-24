@@ -33,7 +33,8 @@ _kitty_tips=(
   "Jobs that take 15 s+ in another tab send a desktop notification when they finish"
   "F1 shows every shortcut; this tip line can be turned off with: kitty-tips off"
   "kitty-quests lists the quests: use a shortcut once to earn its badge"
-  "ninelives shows every NineLives setting (sounds, cat, quests, tips) and how to change it"
+  "Ctrl+Shift+F2 (or ⚙ at the top of the sidebar) opens the NineLives settings: ↑/↓ choose, Enter changes"
+  "ninelives shows every NineLives setting at a glance; ninelives settings opens the list to change them"
   "The cat next to + New tab sums up every tab: =O.O= ! means one needs you (kitty-cat explains)"
   "Sounds too loud? kitty-sounds volume 40 turns the tab sounds down (5-100)"
   "A tab you're looking at doesn't chime when it finishes: you can already see it"
@@ -110,12 +111,12 @@ kitty-cat() {
     off) touch "$_nl_conf"/cat-off && echo "the cat is hiding (kitty-cat on brings it back)";;
     on)  rm -f "$_nl_conf"/cat-off && echo "=^.^=  the cat is back";;
     *)   printf '%s\n' "The cat at the end of \"+ New tab\" watches every tab for you:" \
-           "  =O.O= !    a tab needs you (2! = two tabs)" \
-           "  =^.^= ~    tabs are working (the tail swishes)" \
-           "  =^ω^= ♪    one just finished (♪♪ ♪♪♪: several in a row)" \
-           "  =>.<=      something failed" \
-           "  =^▽^=✦     you earned a badge (♛ = new rank)" \
-           "  =-.-= zZ   nothing happening for 3 minutes: napping" \
+           "  =O.O= !    a tab needs you (amber; 2! = two tabs)" \
+           "  =^.^= ~    tabs are working (blue; the tail swishes)" \
+           "  =^ω^= ♪    one just finished (green; ♪♪ ♪♪♪: several in a row)" \
+           "  =>.<=      something failed (red)" \
+           "  =^▽^=✦     you earned a badge (gold; ♛ = new rank)" \
+           "  =-.-= zZ   nothing happening for 3 minutes: napping (lavender)" \
            "kitty-cat off hides it, kitty-cat on brings it back.";;
   esac
 }
@@ -124,8 +125,9 @@ kitty-buttons() {
     off) touch "$_nl_conf"/buttons-off && echo "sidebar buttons hidden: no search row, no × (kitty-buttons on brings them back)";;
     on)  rm -f "$_nl_conf"/buttons-off && echo "sidebar buttons on";;
     *)   printf '%s\n' "The sidebar's buttons:" \
-           "  ❯ Search tabs…   click to search your tabs (or Ctrl+Shift+Space)" \
+           "  Search tabs      the field: click to search your tabs (or Ctrl+Shift+Space)" \
            "  ⚠2               shown while tabs wait for you (2 = how many): click to go there (Ctrl+Alt+U)" \
+           "  ⚙                the NineLives settings (or Ctrl+Shift+F2)" \
            "  +                a new tab in this folder" \
            "  ×                on the tab you're on: close it" \
            "kitty-buttons off hides them, kitty-buttons on brings them back.";;
@@ -153,6 +155,12 @@ kitty-quests() {
   esac
 }
 ninelives() {  # every NineLives switch at a glance, and the command that changes it
+  # ninelives settings: the settings list to change them in (Ctrl+Shift+F2 or ⚙ in the sidebar)
+  case "${1:-}" in
+    settings|set) python3 "$_nl_conf/settings.py"; return;;
+    "") ;;
+    *) echo "usage: ninelives [settings]"; return 2;;
+  esac
   local c="$_nl_conf" B=$'\e[1m' D=$'\e[37m' R=$'\e[0m' n=0 rank next="" vol snd
   _nl_row() { local pad=$((44 - ${#2})); ((pad < 1)) && pad=1   # pad by characters: ★ is 3 bytes
           printf '  %-8s %s%*s%s%s%s\n' "$1" "$2" "$pad" "" "$D" "$3" "$R"; }
@@ -186,7 +194,7 @@ ninelives() {  # every NineLives switch at a glance, and the command that change
       $'\e[33m' "$R" "$B" "$R"
     printf '    %s(bash scripts/kitty-relaunch.sh --when-idle keeps every tab)%s\n' "$D" "$R"
   fi
-  printf '  %sF1: every shortcut%s\n' "$D" "$R"
+  printf '  %sChange them in a list: ninelives settings (or Ctrl+Shift+F2) · F1: every shortcut%s\n' "$D" "$R"
 }
 # one tip per new shell (sourced twice, e.g. by the dev kitty's rcfile, it stays quiet the 2nd time)
 [ -e "$_nl_conf"/tips-off ] || [ -n "${_NL_TIP_SHOWN:-}" ] || { kitty-tips; _NL_TIP_SHOWN=1; }

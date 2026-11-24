@@ -167,6 +167,14 @@ class Status(TipsCase):
         self.assertIn("next: Drag a tab", out)
         self.assertRegex(out, r"tips\s+on")
 
+    def test_ninelives_settings_runs_the_settings_list(self):
+        # (no terminal here, so settings.py prints its rows instead of opening the list)
+        shutil.copy(os.path.join(HERE, "..", "config", "settings.py"), self.conf)
+        out = self.sh("kitty-cat off >/dev/null; ninelives settings")
+        self.assertIn("Sounds: on", out)
+        self.assertIn("The cat: hidden", out)
+        self.assertIn("ninelives settings", self.sh("ninelives"))      # the summary says where
+
     def test_ninelives_columns_line_up(self):
         out = self.sh("ninelives")
         rows = [l for l in out.splitlines() if re.match(r"  (sounds|cat|quests|buttons|tips) ", l)]

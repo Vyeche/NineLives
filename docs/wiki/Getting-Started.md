@@ -31,7 +31,7 @@ restarts kitty for you and brings every tab back ([step 8](#8-restart-without-lo
 Press **F1** for every shortcut, and run `kitty-sounds` to hear what each sound means.
 
 ## 4. Open a few tabs
-**Ctrl+Shift+T** opens a tab in the current folder (or click **+** in the search row). Start Claude
+**Ctrl+Shift+T** opens a tab in the current folder (or click **+** at the top of the sidebar). Start Claude
 Code, omp or anything else in each. A plain shell tab shows its folder name; an agent tab shows its
 task, with a small mark for the agent under the status icon (`✳` Claude, `π` omp).
 
@@ -72,13 +72,16 @@ its session, and shells come back with kitty's shell integration (prompt jumps, 
 ![Two split tabs before a restart, the kitty window closing, and the same tabs, names and splits back a moment later](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/restart.gif)
 
 ## More to try
-**Find a tab:** **Ctrl+Shift+Space** (or click *Search tabs…*), type part of a name, folder or
+**Find a tab:** **Ctrl+Shift+Space** (or click the *Search tabs* field), type part of a name, folder or
 number, **Tab** to show only Waiting, Working or Done tabs, **Enter** to go there.
 
 ![The search box opens over the current tab; typing api narrows the list to two tabs, Tab steps through the All, Waiting, Working and Done filters, typing migr leaves one tab and Enter jumps to it](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/search.gif)
 
-**Buttons:** **+** in the search row opens a tab, **×** closes the tab you're on, and clicking a tab
+**Buttons:** **+** at the top of the sidebar opens a tab, **×** closes the tab you're on, and clicking a tab
 goes there (the line under **+ New tab** tells you its key, `Alt+3 also gets here`).
+
+**Settings:** **Ctrl+Shift+F2** or the **⚙** button opens the NineLives settings as a list: sounds,
+volume, the cat, quests, buttons and tips, each changed with the arrow keys and applied at once.
 
 ![Clicking + opens a fifth tab, clicking its × closes it, then clicking tab 3 and tab 2 switches to them while the hint line says Alt+3 also gets here](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/buttons.gif)
 

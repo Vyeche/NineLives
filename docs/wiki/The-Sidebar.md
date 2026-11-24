@@ -3,41 +3,55 @@
 Every tab is two lines, with names and folders lined up in one column:
 ```
  12 ◐ Fix the login bug          number, status, name (long names end in …)
-      alpha/proj-one      3m     last two folders, and how long it has been in this state
+    ✳ alpha/proj-one      3m     agent, last two folders, how long it has been in this state
 ```
+Each tab has one strong signal: its status icon (and its name). Everything else is quiet: the
+number, the agent mark, the folder, the branch and the time are in the tab's own muted colour, the
+number and the mark a shade quieter still (kept just above 4.5:1 for text and 3:1 for marks in both
+themes), so a ⚠ or a ✓ stands out at a glance.
 - **Name:** the tab's title (Claude's task, omp's title), or the folder name for a plain shell (also one whose title is just `bash`, as for a shell without kitty's shell integration, unless you named the tab that). Claude's `✳` prefix is dropped: the status slot already says that. Rename with **Ctrl+Shift+R**.
-- **Agent:** under the status icon, a small grey mark says which agent runs in the tab: `✳` Claude, `π` omp, two letters for others (`oc` opencode, `cx` codex, `gm` gemini, `ai` aider). A plain shell has none.
-- **Folder:** the last two folders, with `~` for home; cut at the start with `…` if long. In a git repo on a branch other than `main`/`master`, the branch follows in magenta: `code/api ⌥ fix-parser`.
+- **Number:** what **Alt+1…9** goes to (and what the search box finds by number), in a quiet grey.
+- **Agent:** under the status icon, a small quiet mark says which agent runs in the tab: `✳` Claude, `π` omp, two letters for others (`oc` opencode, `cx` codex, `gm` gemini, `ai` aider). A plain shell has none.
+- **Folder:** the last two folders, with `~` for home; cut at the start with `…` if long. In a git repo on a branch other than `main`/`master`, the branch follows in the folder's colour: `code/api ⌥ fix-parser` (a branch only fits whole or with at least a few letters; otherwise it is left out).
 - **Time** (`3m`, `1h05`): how long the tab has been working, waiting or finished. It appears after one minute, and counts from when the sidebar first saw that state, so it starts again after a kitty restart.
 
-## Search row and buttons
-The top of the sidebar has a search row, like Warp's:
+## Search field and buttons
+The top of the sidebar has a search field and a few buttons, like Warp's:
 ```
-  ❯   Search tabs…     ⚠1  +
+ [ Search tabs      ] [⚠1] [⚙] [+]
 ```
-- **Search tabs…**: click to search your tabs (the same box as **Ctrl+Shift+Space**).
-- **⚠1**: appears only while tabs are waiting for you (amber, with how many); click it to go to the
-  next one (same as **Ctrl+Alt+U**). With nothing waiting the row is just the search and **+**.
+The field is filled with the terminal's own background (white on the light theme), the buttons are
+filled chips in the theme's selection colour, so the row reads as something to click.
+- **Search tabs**: click the field to search your tabs (the same box as **Ctrl+Shift+Space**).
+- **⚠1**: appears only while tabs are waiting for you (an amber chip, with how many); click it to go to the
+  next one (same as **Ctrl+Alt+U**). With nothing waiting the row is the field, **⚙** and **+**.
+- **⚙**: the [NineLives settings](Commands-and-Switches#the-settings-list) (same as **Ctrl+Shift+F2**).
 - **+**: a new tab in the current folder.
 - **×** at the right end of the tab you're on closes it (it asks first if something is running).
-  kitty can't tell where the mouse hovers, so only the current tab has one.
+
+A button lights up in the accent colour while you hold it down. There is no hover look: kitty 0.51
+sends the tab bar no mouse moves (only while a tab is dragged or text in it is selected) and has no
+way to ask where the pointer is, so nothing can change as the mouse passes over (kitty does show a
+hand pointer there). For the same reason only the current tab has a ×.
 
 ![Clicking + opens a fifth tab, clicking its × closes it, then clicking tab 3 and tab 2 switches to them while the hint line under New tab says Alt+3 also gets here](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/buttons.gif)
 
 In a narrow window or with a big font kitty makes the sidebar narrower (it never takes more than a
-third of the window), and the row makes room for its buttons: the words get shorter (`Search…`,
-`Find…`, then only `❯`) while `⚠1` and `+` stay whole and clickable, `+` always above the `×`.
-**+ New tab**, the quest line and the tabs' names and folders fit the narrower sidebar too.
+third of the window), and the row makes room for its buttons: the field's words get shorter
+(`Search`, `Find`, then none), then the chips get narrower, while `⚠1`, `⚙` and `+` stay whole and
+clickable, `+` always above the `×` and in line with the times. Words are never cut in half: **+ New
+tab** shortens to `+ New` and `+`, and the quest line under it drops its words before its key
+(`Ctrl+Shift+H  history`, then `Ctrl+Shift+H`, then just `★8`). Long tab names and folders end in `…`.
 
 Clicking a button doesn't earn that shortcut's quest badge: the quests teach the keys.
 `kitty-buttons off` hides the row and the ×, `kitty-buttons on` brings them back.
 
 ## Status
-![Every state at once in the dark theme: spinning blue icons for a running build, omp and Claude, 1m elapsed on the working tabs, a red ✗ for a failed deploy; then one tab finishes with a sparkle that lands on a green check, a notes tab gets a ● for new output, and another tab turns into a blinking amber block while the cat says =O.O= ! and ⚠1 appears in the search row](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/status.gif)
+![Every state at once in the dark theme: spinning blue icons for a running build, omp and Claude, 1m elapsed on the working tabs, a red ✗ for a failed deploy; then one tab finishes with a sparkle that lands on a green check, a notes tab gets a dot for new output, and another tab turns into a blinking amber block while the cat says =O.O= ! and ⚠1 appears in the search row](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/status.gif)
 
 The same in the light theme:
 
-![The same states in the light theme: spinners, a sparkle landing on a check, a ● for new output and a blinking amber block for the tab that needs you](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/status-light.gif)
+![The same states in the light theme: spinners, a sparkle landing on a check, a dot for new output and a blinking amber block for the tab that needs you](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/status-light.gif)
 
 | Icon | Colour | Means |
 | --- | --- | --- |
@@ -47,7 +61,7 @@ The same in the light theme:
 | ⚠ on a **filled amber block** | amber | **needs you**: a permission prompt or a question. It blinks for 6 s, then stays filled. The strongest mark in the sidebar |
 | ✗ | red | something failed |
 | ‖ | | paused |
-| ● | | new output in a tab you're not looking at |
+| • | quiet grey | new output in a tab you're not looking at (small on purpose: it's news, not a call) |
 
 NineLives doesn't ask the desktop for attention when a tab needs you: on COSMIC that brings kitty to
 the front and takes the keyboard, even mid-sentence in another app. The sound and the cat tell you instead.
@@ -67,7 +81,7 @@ for you, tabs with an error, then the tabs nearest yours. The last line names th
 **Alt+N** still goes to tab N.
 Which tabs are shown is written to `~/.local/state/ninelives/sidebar.txt` whenever it changes, with
 their agent marks (`agents: 3:π 12:✳`), which kitty wrote it (`kitty:` and its process id), the current tab's folder line as kitty drew it (`drawn folder:
-✳ code/api ⌥ fix-parser`), where the buttons are and the columns kitty really drew `⚠`, `+` and `×`
+✳ code/api ⌥ fix-parser`), where the buttons are and the columns kitty really drew `⚠`, `⚙`, `+` and `×`
 in (`check.sh` compares them).
 
 ## Celebrations

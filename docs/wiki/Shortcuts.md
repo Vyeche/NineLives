@@ -44,7 +44,8 @@ There, `★` marks a quest shortcut you haven't used yet and a green `✓` one y
 | --- | --- |
 | **Ctrl+Shift+N** | new kitty window |
 | **Ctrl+Shift+F11** | full screen |
-| **Ctrl+Shift+F5** / **F2** | reload / edit settings |
+| **Ctrl+Shift+F5** | reload kitty.conf |
+| **Ctrl+Shift+F2** (or **⚙** in the sidebar) | NineLives settings: ↑/↓ choose, Enter or ←/→ change, Esc closes; the last row opens kitty.conf in your editor |
 | **Ctrl+Shift+A** then **M / L / 1** | more / less see-through / solid |
 | **Ctrl+Alt+M** | mute / unmute the tab sounds |
 | **F1** | this list |
