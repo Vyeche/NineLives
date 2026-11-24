@@ -731,6 +731,101 @@ class Tick(TabBarCase):
         self.assertFalse(tb._cat["working"])
 
 
+    def test_a_command_under_the_search_box_keeps_running(self):
+        # the search box (an overlay) over a tab running a build: the build hasn't ended, so no
+        # sparkle, and no "done" chime when the box is left open there and you're in another tab
+        # (the overlay's foreground is its own program, which isn't running a command)
+        tb = self.tb
+        a, b = FakeTab(), FakeTab()
+        self.window(a, b, active=0)
+        under = b.windows[0]
+        with mock.patch.object(tb, "_plain_command_running", lambda w: w is under):
+            tb._tick()
+            self.assertIn(b.id, tb._running)
+            top = FakeWindow()
+            b.windows.append(top)
+            b.active_window, b.active_window_for_cwd = top, under
+            tb._running[b.id] -= tb.LONG_JOB + 1
+            tb._tick()
+            tb._tick()
+        self.assertIn(b.id, tb._running)
+        self.assertNotIn(b.id, tb._sparkle_start)
+        self.assertEqual(self.sounds(), [])
+
+
+class AgentMarkRecheck(TabBarCase):
+    """A restart reopens every tab at once, and an agent can still be starting when the sidebar
+    first draws its tab. That empty answer must not stand until some later redraw (it once took 6 s)."""
+
+    def setUp(self):
+        super().setUp()
+        self.clock = [100.0]
+        self.time = mock.patch.object(self.tb.time, "monotonic", lambda: self.clock[0])
+        self.time.start()
+        self.names = {}
+        self.looks = []
+
+        def fg(w):
+            self.looks.append(w.id)
+            return self.names.get(w.id, "kitten")
+        self.fg = mock.patch.object(self.tb, "_foreground_name", fg)
+        self.fg.start()
+        self.cat = mock.patch.object(self.tb, "_cat_face", lambda: "=^.^=")   # a still cat: only
+        self.cat.start()                                                      # marks ask to redraw
+        self.tb._cat["drawn"] = "=^.^="
+
+    def tearDown(self):
+        self.cat.stop()
+        self.fg.stop()
+        self.time.stop()
+        super().tearDown()
+
+    def tick_at(self, t):
+        self.clock[0] = 100.0 + t
+        self.tb._tick()
+
+    def test_a_mark_that_was_still_starting_appears_within_a_second(self):
+        tb = self.tb
+        a, b = FakeTab(), FakeTab()
+        tm = self.window(a, b)
+        self.tick_at(0)                                 # the new kitty's first tick: windows seen
+        self.assertEqual(tb._agent_mark(b.id), "")      # drawn while kitten still starts the agent
+        self.names[b.windows[0].id] = "claude"          # the agent is up now; nothing redraws by itself
+        dirty = tm.dirty
+        self.tick_at(0.25)
+        self.assertEqual(tm.dirty, dirty)               # too soon to look again
+        self.tick_at(0.5)
+        self.assertEqual(tb._agents[b.id][1], "✳")
+        self.assertEqual(tm.dirty, dirty + 1)           # redrawn once, with the mark
+        self.tick_at(0.75)
+        self.assertEqual(tm.dirty, dirty + 1)           # and not again: it's known now
+
+    def test_no_agent_costs_a_few_looks_and_no_redraws(self):
+        tb = self.tb
+        a = FakeTab()
+        tm = self.window(a)
+        self.tick_at(0)
+        tb._agent_mark(a.id)
+        dirty, looks = tm.dirty, len(self.looks)
+        for i in range(1, 160):                         # 20 s of ticks
+            self.tick_at(i * tb.TICK)
+        self.assertEqual(tm.dirty, dirty)               # an idle sidebar stays idle
+        self.assertLessEqual(len(self.looks) - looks, tb.AGENT_YOUNG / tb.AGENT_RECHECK + 1)
+        self.names[a.windows[0].id] = "claude"          # an old window: the usual 3 s cache
+        looks = len(self.looks)
+        self.tick_at(30)
+        self.assertEqual(len(self.looks), looks)
+
+    def test_closed_windows_are_forgotten(self):
+        a, b = FakeTab(), FakeTab()
+        tm = self.window(a, b)
+        self.tick_at(0)
+        self.assertIn(b.windows[0].id, self.tb._born)
+        tm.tabs.remove(b)
+        self.tick_at(1)
+        self.assertNotIn(b.windows[0].id, self.tb._born)
+
+
 class Draw(TabBarCase):
     def data(self, tab, index, title, wd):
         acc = types.SimpleNamespace(program_status="", last_focused_progress_percent="", active_wd=wd)
@@ -867,6 +962,51 @@ class Draw(TabBarCase):
         line2 = self.strip(self.tb.draw_title(self.data(a, 2, "x", wd)).split("\n")[1])
         self.assertIn("⌥ a-real", line2)
         self.assertLessEqual(self.tb._cells(line2), 30)
+
+    def overlay(self, tab, cwd, title):
+        """Open an overlay (the search box) over the tab's window, as kitty 0.51 does: the overlay
+        joins the window's group on top and becomes the active window; the group's main window,
+        Tab.active_window_for_cwd, stays the one underneath. Returns the overlay."""
+        under = tab.windows[0]
+        under.title, under.get_cwd_of_child = title, lambda: cwd
+        top = FakeWindow()
+        top.title = title                     # --title current: a copy of the window's title
+        top.get_cwd_of_child = lambda: "/w/start"     # kitty's start folder (no --cwd)
+        tab.windows.append(top)
+        tab.active_window, tab.active_window_for_cwd = top, under
+        return top
+
+    def test_the_search_box_keeps_the_folder_mark_and_branch_of_the_window_under_it(self):
+        a, b = FakeTab(), FakeTab()
+        self.window(a, b, active=1)
+        wd = self.repo("fix-parser")
+        top = self.overlay(b, wd, "✳ Write release notes")
+        names = {b.windows[0].id: "claude", top.id: "python3"}
+        # what kitty hands the template while the box is open: the overlay's folder (and title)
+        data = self.data(b, 2, "tab-finder", "/w/start")
+        with mock.patch.object(self.tb, "_foreground_name", lambda w: names.get(w.id, "bash")):
+            line1, line2 = (self.strip(x) for x in self.tb.draw_title(data).split("\n"))
+        self.assertIn("Write release notes", line1)
+        self.assertEqual(line2.split()[::2], ["✳", "⌥"])
+        self.assertTrue(line2.split()[1].endswith("parser/src") and line2.endswith("fix-parser"), line2)
+        b.name = "Mine"                       # a renamed tab keeps its name (kitty's title is it)
+        with mock.patch.object(self.tb, "_foreground_name", lambda w: names.get(w.id, "bash")):
+            line1 = self.strip(self.tb.draw_title(self.data(b, 2, "Mine", "/w/start")).split("\n")[0])
+        self.assertIn("Mine", line1)
+        # closed again: back to what kitty says about the tab's active window
+        b.windows.remove(top)
+        b.active_window = b.active_window_for_cwd = b.windows[0]
+        self.tb._agents.clear()
+        line2 = self.strip(self.tb.draw_title(self.data(b, 2, "x", "/w/other")).split("\n")[1])
+        self.assertEqual(line2.split(), ["w/other"])
+
+    def test_no_overlay_no_change(self):
+        a = FakeTab()
+        self.window(a)
+        self.assertIsNone(self.tb._covered(a.id))
+        self.assertIs(self.tb._base_window(a), a.windows[0])     # a kitty without active_window_for_cwd
+        a.active_window_for_cwd = a.windows[0]
+        self.assertIsNone(self.tb._covered(a.id))
 
     @staticmethod
     def strip(s):

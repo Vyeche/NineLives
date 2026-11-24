@@ -152,7 +152,14 @@ def _plain_command_running(w) -> bool:
 AGENT_MARK = {"claude": "✳", "omp": "π", "opencode": "oc", "codex": "cx", "gemini": "gm", "aider": "ai",
               "devin": "dv", "cursor-agent": "cu", "goose": "go", "amp": "am"}
 AGENT_TTL = 3.0
+# A window's agent can still be starting when the sidebar first draws it (a restart reopens every
+# tab at once: kitten, then bash -lc, then the agent). An empty answer then would stand until the
+# next redraw, which on an idle sidebar came seconds later, so for a new window the timer looks
+# again (_recheck_mark) and redraws only if a mark turned up.
+AGENT_RECHECK = 0.5         # seconds between looks while a new window has no mark
+AGENT_YOUNG = 10.0          # how long a window counts as new
 _agents: dict = {}           # tab id -> (checked at, mark)
+_born: dict = {}             # window id -> when the timer first saw it
 
 
 def _mac_argv(pid) -> list:
@@ -285,18 +292,59 @@ def _foreground_name(w) -> str:
     return name
 
 
-def _agent_mark(tab_id) -> str:
-    """ "✳" for Claude, "π" for omp, two letters for other agents, "" for anything else."""
-    now = time.monotonic()
-    hit = _agents.get(tab_id)
-    if hit and now - hit[0] < AGENT_TTL:
-        return hit[1]
-    mark = ""
+def _tab_obj(tab_id):
+    """kitty's Tab for an id (draw code gets only a TabAccessor), or None."""
     try:
         for tm in get_boss().all_tab_managers:
             for tab in tm:
-                if tab.id == tab_id and tab.active_window is not None:
-                    mark = AGENT_MARK.get(_foreground_name(tab.active_window), "")
+                if tab.id == tab_id:
+                    return tab
+    except Exception:
+        pass
+    return None
+
+
+def _base_window(tab):
+    """The window a tab's row describes: its active window, or, while an overlay covers it (the
+    search box, the F1 sheet), the window underneath. kitty 0.51 keeps an overlay in the same window
+    group, on top of the window it covers; the group's main window (Tab.active_window_for_cwd, which
+    kitty's own launch --cwd=current and --title current start from) is the one under the overlays."""
+    try:
+        w = tab.active_window_for_cwd
+    except Exception:
+        w = None
+    if w is None:
+        try:
+            w = tab.active_window
+        except Exception:
+            w = None
+    return w
+
+
+def _covered(tab_id):
+    """(tab, the window under the overlay) while an overlay covers the tab's window, else None."""
+    tab = _tab_obj(tab_id)
+    if tab is None:
+        return None
+    try:
+        top = tab.active_window
+    except Exception:
+        return None
+    base = _base_window(tab)
+    return (tab, base) if base is not None and top is not None and base is not top else None
+
+
+def _agent_mark(tab_id, ttl: float = AGENT_TTL) -> str:
+    """ "✳" for Claude, "π" for omp, two letters for other agents, "" for anything else."""
+    now = time.monotonic()
+    hit = _agents.get(tab_id)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    mark = ""
+    try:
+        w = _base_window(_tab_obj(tab_id))
+        if w is not None:
+            mark = AGENT_MARK.get(_foreground_name(w), "")
     except Exception:
         pass
     if len(_agents) > 500:
@@ -572,6 +620,22 @@ def _draw_title(data) -> str:
         wd = tab.active_wd if tab is not None else ""
     except Exception:
         wd = ""
+    under = _covered(data.get("tab_id"))
+    if under is not None:
+        # an overlay (the search box, the F1 sheet) is open in this tab: kitty describes the tab by
+        # the overlay (its folder is kitty's start folder, its program no agent), so the row
+        # describes the window under it: its folder, branch and agent mark, and its title unless
+        # you renamed the tab
+        t, w = under
+        try:
+            wd = w.get_cwd_of_child() or wd
+        except Exception:
+            pass
+        try:
+            if not getattr(t, "name", "") and w.title:
+                data = dict(data, title=w.title)
+        except Exception:
+            pass
     icon, kind, extra = _status(data)
     slot = icon if _cells(icon) >= 2 else (icon + "  ")[:2]
     name = (data.get("bell_symbol") or "") + extra + _tab_name(data.get("title") or "", wd, data.get("tab_id"))
@@ -692,6 +756,18 @@ def _git_branch(wd: str) -> str:
 _first_tick = True
 
 
+def _recheck_mark(tab_id, wid, now: float) -> bool:
+    """A window the timer first saw under AGENT_YOUNG seconds ago, drawn without an agent mark:
+    look again every AGENT_RECHECK seconds (its agent may still have been starting). True when a
+    mark turned up, so the sidebar is redrawn; nothing is redrawn while the answer stays the same."""
+    if now - _born.setdefault(wid, now) >= AGENT_YOUNG:
+        return False
+    hit = _agents.get(tab_id)
+    if hit is None or hit[1] or now - hit[0] < AGENT_RECHECK:
+        return False                    # not drawn yet (drawing looks), has its mark, or just looked
+    return bool(_agent_mark(tab_id, AGENT_RECHECK))
+
+
 def _tick(timer_id=None) -> None:
     global _first_tick, _frame
     _frame += 1
@@ -741,7 +817,8 @@ def _tick(timer_id=None) -> None:
                 else:
                     _working_tabs.discard(tab.id)
                 # plain terminal tabs: spin while a command runs, sparkle (+ chime if long) when it ends
-                w = tab.active_window
+                # (in the window under an overlay: the search box over a build isn't its end)
+                w = _base_window(tab)
                 has_status = False
                 try:
                     has_status = bool(w.program_status.as_list())
@@ -760,6 +837,8 @@ def _tick(timer_id=None) -> None:
                         _play("done", tab.id)
                 if 0 <= _frame - _sparkle_start.get(tab.id, -99) <= len(SPARKLE):
                     animate = True                 # (one more frame after the last, to land on ✓)
+                if w is not None and _recheck_mark(tab.id, w.id, now):
+                    animate = True
         # who is looking at what: the active tab of the focused kitty window counts as seen
         try:
             from kitty.fast_data_types import current_focused_os_window_id
@@ -786,6 +865,8 @@ def _tick(timer_id=None) -> None:
         for wid in list(_prev_state):
             if wid not in seen:
                 del _prev_state[wid]
+        for wid in [w for w in _born if w not in seen]:
+            del _born[wid]
         tab_ids = {tab.id for tm in boss.all_tab_managers for tab in tm}
         for d in (_since, _sparkle_start, _blocked_since, _running, _buttons.setdefault("close_cols", {})):   # closed tabs
             for tid in [t for t in d if t not in tab_ids]:
@@ -1433,6 +1514,9 @@ def _note_layout(bar, data, shown_ids, hidden) -> None:
         # what kitty really drew there, read back from the sidebar's cells, so check.sh can compare
         # it with the columns above: the column of each glyph, and the sidebar's cell grid
         text += f"cells: {g.left} {g.top} {bar.cell_width} {bar.cell_height} {bar.screen.columns}\n"
+        if crow >= 0 and at in nums:
+            # the current tab's folder line (agent mark, folder, branch), read back from the cells
+            text += f"active: {nums[at]}\ndrawn folder: {_screen_text(bar, crow + 1).strip()}\n"
         for row, glyphs in ((top.y.start if top is not None else -1, "⚠+"), (crow, "×")):
             line = _screen_text(bar, row)
             for ch in glyphs:

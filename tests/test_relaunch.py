@@ -31,7 +31,9 @@ case "$1" in
       exit 0 ;;
   +runpy)    exit 0 ;;
   --version) echo "kitty 9.9.9 (fake)"; exit 0 ;;
-  *)  env > "$D/started-env"; echo "$*" > "$D/started-args"; touch "$D/started"; exit 0 ;;
+  *)  env > "$D/started-env"; echo "$*" > "$D/started-args"
+      if { true >&9; } 2>/dev/null; then echo open; else echo closed; fi > "$D/started-fd9"
+      touch "$D/started"; exit 0 ;;
 esac
 """
 
@@ -118,6 +120,9 @@ class NormalRestart(unittest.TestCase):
         args = read(f"{d}/started-args")
         self.assertIn("--listen-on unix:@fake", args)       # the new kitty keeps the address
         self.assertIn("--session", args)
+        # the restart's lock (fd 9) stays with the restart: a new kitty holding it turned every
+        # later restart away ("another restart is already running")
+        self.assertEqual(read(f"{d}/started-fd9").strip(), "closed")
         started_env = read(f"{d}/started-env")
         leaks = getattr(self, "leaks", ("_KR_SOCK=", "_KR_CACHE=", "_KR_DETACHED=", "_KR_NEW=", "KITTY_LISTEN_ON=", "XDG_CACHE_HOME="))
         for leak in leaks:

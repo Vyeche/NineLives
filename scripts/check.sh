@@ -153,6 +153,14 @@ print(" ".join(str(i + 1) for i, t in enumerate(json.load(sys.stdin)[0]["tabs"])
     if [ "$b1" = 1 ] && [ -z "$b2" ] && [ "$b3" = 2 ] && [ -z "$b4" ]; then
       ok "the search key toggles its box, and a box left in another tab doesn't swallow it"
     else fail "search toggle: tabs with a box: '$b1' → '$b2'; from tab 2: '$b3' → '$b4'"; fi
+    # the box is an overlay (kitty's start folder, no agent): while it's open, its tab's row still
+    # describes the window under it. Tab 6 runs Claude in code/api, on branch fix-parser.
+    folder_line() { sed -n 's/^drawn folder: //p' "$NL_TEST_DIR/state/sidebar.txt" 2>/dev/null; }
+    bash scripts/test-kitty.sh k focus-tab --match index:5 >/dev/null 2>&1; sleep 0.8
+    f1="$(folder_line)"; search_key; f2="$(folder_line)"; b5="$(boxes)"; search_key
+    if [ "$b5" = 6 ] && [[ "$f1" == "✳ code/api ⌥ fix-parser"* ]] && [[ "$f2" == "✳ code/api ⌥ fix-parser"* ]]; then
+      ok "the search box keeps its tab's folder, agent mark and branch in the sidebar ($f2)"
+    else fail "sidebar row under the search box (tab with a box: '$b5'): '$f1' → '$f2' (want ✳ code/api ⌥ fix-parser)"; fi
     # A narrow window and a big font make kitty's sidebar narrower (a third of the window at
     # most): the search row must stay whole, sidebar.txt's button columns must be where kitty drew
     # ⚠, + and × (read back from the sidebar's cells), and clicking them must work
@@ -234,6 +242,19 @@ print(json.dumps(out))'
     before="$(k ls | python3 -c "$desc")"
     dry="$(bash scripts/test-kitty.sh relaunch --dry-run 2>&1)"
     if out="$(bash scripts/test-kitty.sh relaunch 2>&1)"; then
+      # the marks come back at once, with nothing touching kitty (no focus changes: those redraw).
+      # An agent still starting when the new kitty first drew its tab used to get its mark only at
+      # some later redraw, seconds later. (agents: lists the tabs shown, so only those count)
+      want=""; miss="?"
+      for _ in $(seq 1 15); do
+        lay="$(cat "$NL_TEST_DIR/state/sidebar.txt" 2>/dev/null)"; shown=" $(sed -n 's/^shown: //p' <<< "$lay") "
+        want="$(for m in 3:π 12:✳ 13:✳; do [[ "$shown" == *" ${m%%:*} "* ]] && printf '%s ' "$m"; done)"
+        got="$(sed -n 's/^agents: //p' <<< "$lay")"
+        miss="$(for m in $want; do grep -qw "$m" <<< "$got" || printf '%s ' "$m"; done)"
+        [ -n "$want" ] && [ -z "$miss" ] && break; sleep 0.1
+      done
+      if [ -n "$want" ] && [ -z "$miss" ]; then ok "after the restart every shown agent tab has its mark within 1.5 s (${want% })"
+      else fail "marks 1.5 s after the restart: missing '${miss:-?}' of '${want:-nothing shown}' (agents: $got)"; fi
       sleep 1.5; after="$(k ls | python3 -c "$desc")"
       k focus-tab --match index:10; k action toggle_layout stack; sleep 0.5      # unzoom tab 11
       unzoomed="$(k ls | python3 -c 'import json,sys; t=json.load(sys.stdin)[0]["tabs"][10]; print(t["layout"], len(t["layout_state"].get("pairs", {})))')"
@@ -314,9 +335,11 @@ print(len(plain), "ok" if plain and all(n == f for n, f in plain) else plain)')"
       # the restart's own marker must not reach the new kitty (it did once: the next restart from a
       # tab then ran in the foreground and died with the old kitty)
       kpid="$(pgrep -f -- "[-]-listen-on unix:@ninelives-test-kitty" | head -1)"
-      if [ -n "$kpid" ] && ! tr '\0' '\n' < "/proc/$kpid/environ" | grep -q "^_KR_DETACHED="; then
-        ok "the restarted kitty doesn't inherit the restart's internals"
-      else fail "the restarted kitty inherited _KR_DETACHED (pid ${kpid:-none})"; fi
+      # nor its lock: a kitty holding it turned every later restart away
+      if [ -n "$kpid" ] && ! tr '\0' '\n' < "/proc/$kpid/environ" | grep -q "^_KR_DETACHED=" \
+          && ! ls -l "/proc/$kpid/fd" 2>/dev/null | grep -q "kitty-relaunch.*lock"; then
+        ok "the restarted kitty doesn't inherit the restart's internals (its marker, its lock)"
+      else fail "the restarted kitty inherited _KR_DETACHED or the restart's lock (pid ${kpid:-none})"; fi
     else fail "relaunch: $(tail -3 <<< "$out")"; fi
   else fail "test kitty did not start"; fi
 fi
