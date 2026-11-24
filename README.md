@@ -13,7 +13,7 @@ walkthrough goes from install to your first "needs you" in pictures.
 
 ![The sidebar in the dark and light themes: working tabs spin, a finished one has ✓, the one waiting for you has an amber block, an error has ✗, and the cat at the bottom says a tab needs you](docs/images/sidebar.png)
 
-Spinning ◐ = working · ✓ = finished · amber block ⚠ = **needs you** · ✗ = error · ● = new output ·
+Spinning ◐ = working · ✓ = finished · amber block ⚠ = **needs you** · ✗ = error · • = new output ·
 `1m` = how long · `=O.O= !` = the cat saying a tab needs you · `★0` = your next quest.
 
 ## Requirements
@@ -70,9 +70,9 @@ backup `install.sh` made of your own config. Then restart kitty and, if you like
 ## At a glance
 | | |
 | --- | --- |
-| **Status** | ◐ working (blue) · `· ✧ ✦ ✶` → ✓ finished (green) · **amber block ⚠ needs you** · ✗ error (red) · ● new output. The folder line shows how long (`3m`). [More](docs/wiki/The-Sidebar.md) |
+| **Status** | ◐ working (blue) · `· ✧ ✦ ✶` → ✓ finished (green) · **amber block ⚠ needs you** · ✗ error (red) · • new output (small and quiet). The folder line shows how long (`3m`). [More](docs/wiki/The-Sidebar.md) |
 | **Sounds** | quiet and short: two notes up = done, a rising "mrrp?" = needs you, two low notes down = error, plus badge and rank sounds. Silent for the tab you're watching. **Ctrl+Alt+M** mutes, `kitty-sounds volume 40` turns down. [More](docs/wiki/Sounds.md) |
-| **The cat** | at the end of **+ New tab**, it sums up every tab: `=O.O= !` needs you, `=^.^= ~` working, `=^ω^= ♪` done, `=-.-= zZ` napping. [More](docs/wiki/The-Cat.md) |
+| **The cat** | at the end of **+ New tab**, it sums up every tab: `=O.O= !` needs you, `=^.^= ~` working, `=^ω^= ♪` done, `=-.-= zZ` napping, each in its own colour. [More](docs/wiki/The-Cat.md) |
 | **Quests** | 16 shortcuts worth knowing; use one once to earn its badge, from Kitten to Nine Lives. `kitty-quests` lists them. [More](docs/wiki/Quests-and-Badges.md) |
 | **Tabs** | click, **Alt+1…9**, drag to reorder, middle-click closes, **Ctrl+Shift+T** new tab here, **Ctrl+Shift+Space** search tabs, **Ctrl+Alt+U** the tab waiting for you; a git branch other than main shows after the folder |
 | **Splits** | **Ctrl+Alt+→/↓** split, **Ctrl+Alt+arrows** move, **Ctrl+Alt+Z** zoom |
@@ -83,13 +83,17 @@ Waiting, Working or Done tabs, **Enter** to go there.
 
 ![The search box opens over the current tab; typing api narrows the list to two tabs, Tab steps through the All, Waiting, Working and Done filters with their counts, typing migr leaves one tab and Enter jumps to it](docs/images/gifs/search.gif)
 
-**Buttons** in the search row: **+** opens a tab, **×** closes the tab you're on, and a click on a tab
-goes there.
+**Buttons** at the top of the sidebar, next to the search field: **+** opens a tab, **⚙** opens the
+settings, **⚠1** (while a tab waits for you) goes to it, **×** closes the tab you're on, and a click on
+a tab goes there.
 
 ![Clicking + opens a fifth tab, clicking its × closes it, then clicking tab 3 and tab 2 switches to them while the hint line under New tab says Alt+3 also gets here](docs/images/gifs/buttons.gif)
 
-`ninelives` shows every setting at a glance. Everything can be turned off: `kitty-sounds off`, `kitty-cat off`,
-`kitty-quests off`, `kitty-tips off`, `kitty-buttons off`
+**Ctrl+Shift+F2** (or **⚙** at the top of the sidebar, or `ninelives settings`) opens the settings
+as a list: ↑/↓ choose, Enter or ←/→ change, and the change applies at once; its last row opens
+`kitty.conf` in your editor. `ninelives` prints every setting at a glance. Everything can be turned
+off there or with `kitty-sounds off`, `kitty-cat off`, `kitty-quests off`, `kitty-tips off`,
+`kitty-buttons off`
 ([all switches](docs/wiki/Commands-and-Switches.md)).
 
 ## Documentation

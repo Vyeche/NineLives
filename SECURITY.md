@@ -11,7 +11,9 @@ NineLives is a kitty configuration. Everything runs locally, as you, on your own
   notification's text is passed to `osascript` as arguments, never as part of its script).
 - **Shell scripts and helpers** you run yourself: `scripts/install.sh`, `scripts/uninstall.sh`,
   `scripts/kitty-relaunch.sh` (with `scripts/kitty-tabs.py`), `config/tips.sh` (sourced by your
-  `~/.bashrc` or `~/.zshrc`), `config/shortcuts.sh` and `config/tab-finder.py`.
+  `~/.bashrc` or `~/.zshrc`), `config/shortcuts.sh`, `config/tab-finder.py` and `config/settings.py`
+  (the settings list; it writes only the switch files in kitty's config folder, and with the
+  one-off remote-control connection kitty hands it, asks kitty to open `kitty.conf` in your editor).
 - **Remote control:** `kitty.conf` turns on kitty's remote control over a socket only
   (`allow_remote_control socket-only`), at `$XDG_RUNTIME_DIR/ninelives-kitty-<pid>`, a folder only
   your user can open (on macOS, which has no `XDG_RUNTIME_DIR`, in your temp folder `$TMPDIR`,

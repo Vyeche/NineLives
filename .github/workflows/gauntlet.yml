@@ -39,11 +39,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  KITTY_VERSION: "0.51.0"
-  # SHA-256 of kitty-0.51.0-x86_64.txz from kitty's GitHub release; change both together
-  KITTY_SHA256: "c285daaf1b699997614939c8d1cd92dd8b99302ff12f18efcc3f69382aa72b1d"
-  # SHA-256 of kitty-0.51.0.dmg (macOS) from the same release, as GitHub records it for the asset
-  KITTY_DMG_SHA256: "e7d51ec9f1978ff2fee61647b6f7eb59530e06d9bb1af876b00357ca7779638d"
+  KITTY_VERSION: "0.51.1"
+  # SHA-256 of kitty-0.51.1-x86_64.txz from kitty's GitHub release; change both together
+  KITTY_SHA256: "d309be978f017dbdcccae175d281092fefe7c8bc64478fa620581604ab0b53c0"
+  # SHA-256 of kitty-0.51.1.dmg (macOS) from the same release, as GitHub records it for the asset
+  KITTY_DMG_SHA256: "7a1c492103d7e5ff825351bdda1833bdf6f95d33da9e1ae22e52f61cc5ec013e"
   ACTIONLINT_VERSION: "1.7.12"
   # SHA-256 of actionlint_1.7.12_linux_amd64.tar.gz (matches the release's checksums.txt)
   ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"

@@ -21,7 +21,7 @@ skip() { printf '  \e[2mskip  %s\e[0m\n' "$1"; }
 echo "Syntax"
 if out="$(PYTHONDONTWRITEBYTECODE=1 python3 - <<'EOF' 2>&1
 import ast, sys
-for f in ("config/tab_bar.py", "scripts/make-sounds.py", "scripts/vmouse.py", "tests/live_agent_lookup.py"):
+for f in ("config/tab_bar.py", "config/tab-finder.py", "config/settings.py", "scripts/make-sounds.py", "scripts/vmouse.py", "tests/live_agent_lookup.py"):
     ast.parse(open(f, encoding="utf-8").read(), f)
 EOF
 )"; then ok "python parses"; else fail "python: $out"; fi
@@ -30,7 +30,7 @@ bad=""; for f in config/*.sh scripts/*.sh; do bash -n "$f" 2>/dev/null || bad="$
 
 echo "Unit tests"
 if out="$(PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests 2>&1)"; then
-  ok "$(grep -oE 'Ran [0-9]+ tests?' <<< "$out") (tab_bar.py against a fake kitty; kitty-tabs.py; tips.sh)"
+  ok "$(grep -oE 'Ran [0-9]+ tests?' <<< "$out") (tab_bar.py against a fake kitty; kitty-tabs.py; settings.py; tips.sh)"
 else fail "unit tests: $(grep -E '^(FAIL|ERROR):' <<< "$out" | head -5 | tr '\n' ' ')"; fi
 
 echo "Install"
@@ -122,6 +122,18 @@ else
     after="$(ntabs)"
     if [ "$added" = "$((before + 1))" ] && [ "$after" = "$before" ]; then ok "sidebar buttons: + opens a tab, × closes it"
     else fail "sidebar buttons: tabs $before → + → $added → × → $after"; fi
+    # ⚙ opens the settings list over the current tab, and a second click closes it again
+    panels() { bash scripts/test-kitty.sh k ls 2>/dev/null | python3 -c 'import json, sys
+print(sum(1 for o in json.load(sys.stdin) for t in o["tabs"] for w in t["windows"]
+          if any("settings.py" in a for a in (w.get("cmdline") or []) + [x for p in w.get("foreground_processes") or [] for x in p.get("cmdline") or []])))'; }
+    read -r gx gy <<< "$(btn settings)"
+    python3 scripts/xclick.py "${NL_TEST_DISPLAY:-:97}" "${gx:-0}" "${gy:-0}" >/dev/null 2>&1; sleep 1.5
+    p1="$(panels)"; shown="$(bash scripts/test-kitty.sh k get-text --match state:focused 2>/dev/null | head -3)"
+    python3 scripts/xclick.py "${NL_TEST_DISPLAY:-:97}" "${gx:-0}" "${gy:-0}" >/dev/null 2>&1; sleep 1.5
+    p2="$(panels)"
+    if [ "$p1" = 1 ] && [ "$p2" = 0 ] && grep -q "NineLives settings" <<< "$shown"; then
+      ok "sidebar ⚙ opens the settings list, and closes it again"
+    else fail "sidebar ⚙: settings panels open $p1 → $p2; it showed: $(tr '\n' ' ' <<< "$shown")"; fi
     bash scripts/test-kitty.sh k focus-tab --match index:0 >/dev/null 2>&1; sleep 0.5
     if shot="$(bash scripts/test-kitty.sh shot check)" && cp "$shot" "${TMPDIR:-/tmp}/ninelives-check.png"; then
       ok "sidebar screenshot: ${TMPDIR:-/tmp}/ninelives-check.png"
@@ -163,12 +175,12 @@ print(" ".join(str(i + 1) for i, t in enumerate(json.load(sys.stdin)[0]["tabs"])
     else fail "sidebar row under the search box (tab with a box: '$b5'): '$f1' → '$f2' (want ✳ code/api ⌥ fix-parser)"; fi
     # A narrow window and a big font make kitty's sidebar narrower (a third of the window at
     # most): the search row must stay whole, sidebar.txt's button columns must be where kitty drew
-    # ⚠, + and × (read back from the sidebar's cells), and clicking them must work
+    # ⚠, ⚙, + and × (read back from the sidebar's cells), and clicking them must work
     sidebar_buttons() {  # LABEL: compare and click; prints nothing, ok/fail lines only
       local lay left top cw ch _cols b g x y col drawn bad="" t0 t1 t2 act
       lay="$(cat "$NL_TEST_DIR/state/sidebar.txt" 2>/dev/null)"
       read -r _ left top cw ch _cols <<< "$(grep '^cells: ' <<< "$lay")"
-      for b in waiting:⚠ new:+ close:×; do
+      for b in waiting:⚠ settings:⚙ new:+ close:×; do
         g="${b#*:}"; b="${b%%:*}"
         read -r x y <<< "$(grep "^button $b: " <<< "$lay" | cut -d' ' -f3-)"
         drawn="$(grep "^drawn $g: " <<< "$lay" | cut -d' ' -f3)"
@@ -176,7 +188,7 @@ print(" ".join(str(i + 1) for i, t in enumerate(json.load(sys.stdin)[0]["tabs"])
         [ -n "$x" ] && [ -n "$drawn" ] && [ "$col" = "$drawn" ] || bad="$bad $b(col ${col:-?}, $g drawn at ${drawn:-nowhere})"
       done
       if [ -n "$bad" ]; then fail "$1: sidebar.txt buttons don't match what kitty drew:$bad ($(tr '\n' ' ' <<< "$lay"))"; return; fi
-      ok "$1: the search row is whole ($((_cols - 1)) cells) and sidebar.txt's ⚠, + and × are where kitty drew them"
+      ok "$1: the search row is whole ($((_cols - 1)) cells) and sidebar.txt's ⚠, ⚙, + and × are where kitty drew them"
       read -r x y <<< "$(grep '^button waiting: ' <<< "$lay" | cut -d' ' -f3-)"
       python3 scripts/xclick.py "${NL_TEST_DISPLAY:-:97}" "$x" "$y" >/dev/null 2>&1; sleep 1.2
       act="$(bash scripts/test-kitty.sh k ls 2>/dev/null | python3 -c 'import json,sys; print([i+1 for i,t in enumerate(json.load(sys.stdin)[0]["tabs"]) if t["is_active"]])')"

@@ -6,7 +6,11 @@ Everything kitty-side is in `config/tab_bar.py`, which kitty loads for `{custom}
 ## 1. Drawing each tab
 `draw_title(data)` returns two lines per tab (number, status slot, name; then folder and time). Widths
 come from kitty's `wcswidth`, so wide characters line up. Colours are palette colours (`fmt.fg.colorN`),
-so both themes work without code changes. If drawing ever fails, it returns a plain line instead of
+so both themes work without code changes. The quiet parts (the number, the agent mark, the "new
+output" dot) and the search field and buttons take the theme's own colours from kitty's options as
+they are drawn (`_theme`), so they follow a light/dark switch too: the quiet shades are the tab's
+text colour moved toward its background until just above 4.5:1 (text) or 3:1 (marks), and every
+pair in the search row is checked to stay above 4.5:1. If drawing ever fails, it returns a plain line instead of
 raising, because kitty drops the whole title template on an exception.
 
 ## 2. A timer for status, sound and animation
@@ -43,7 +47,7 @@ if not.
 | --- | --- |
 | `TabManager.handle_tab_bar_mouse` | drag tabs inside the sidebar on Wayland (COSMIC ignores kitty's compositor drag) |
 | `TabBar.update_vertical` | the gap row under a tab belongs to that tab, for clicks and drags |
-| `TabManager.tab_bar_data` | "+ New tab" label, the cat, the quest line |
+| `TabManager.tab_bar_data` | the search field and buttons on top; "+ New tab" label, the cat, the quest line |
 | `Boss.dispatch_action` | notice shortcuts for quests |
 | drag image functions | the high-contrast drag card (X11) |
 
@@ -62,6 +66,8 @@ written atomically to `~/.local/state/ninelives/`.
 | `config/ninelives-macos.conf` | read only by kitty on macOS: the socket in `$TMPDIR`, Ctrl+Alt+M with `afplay` |
 | `config/cosmic-*.conf`, `*-theme.auto.conf` | colours; kitty picks an auto file by the desktop's light/dark setting |
 | `config/shortcuts.sh` | the F1 sheet (wraps to the window) |
+| `config/tab-finder.py` | the tab search box (Ctrl+Shift+Space) and the jump to the waiting tab (Ctrl+Alt+U) |
+| `config/settings.py` | the settings list (Ctrl+Shift+F2, the sidebar's ⚙, `ninelives settings`): one row per setting, written to the same switch files the `kitty-*` commands use |
 | `config/tips.sh` | prompt tips and the `kitty-*` commands |
 | `config/sounds/*.oga` | sounds, built by `scripts/make-sounds.py` |
 | `scripts/install.sh` | install with backups and a config check |

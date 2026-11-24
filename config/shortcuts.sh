@@ -51,7 +51,7 @@ k "Drag a tab"              "Reorder (an orange line shows where it lands)" drag
 k "Ctrl+Shift+R"            "Rename tab" rename
 k "Ctrl+Shift+Space"        "Search tabs: a name, folder or number (Tab: waiting / working / done)" search
 k "Ctrl+Alt+U"              "Go to the tab waiting for you (⚠; then ✗ failed ones)" waiting
-k "❯ Search tabs…  ⚠2  +"   "Top of the sidebar: click to search, a new tab, and (while tabs wait for you) go to them"
+k "Search tabs  ⚠2 ⚙ +"     "Top of the sidebar: the field searches; ⚠2 goes to the tabs waiting for you, ⚙ settings, + a new tab"
 k "×"                       "Right end of the current tab: close it (kitty-buttons off hides these)"
 k "+ New tab"               "End of the sidebar: new tab (the line under it is your next quest)"
 h "Splits (several panes in one tab)"
@@ -71,7 +71,7 @@ h "Window"
 k "Ctrl+Shift+N"            "New kitty window"
 k "Ctrl+Shift+F11"          "Full screen"
 k "Ctrl+Shift+F5"           "Reload settings (kitty.conf)"
-k "Ctrl+Shift+F2"           "Edit settings"
+k "Ctrl+Shift+F2"           "NineLives settings: ↑/↓ choose, Enter changes (last row: kitty.conf in your editor)"
 h "Handy extras"
 k "Ctrl+Shift+Z / X"        "Jump to previous / next command prompt" prompts
 k "Ctrl+Shift+G"            "Show the last command's output in a pager" output
@@ -84,17 +84,17 @@ s 4 "◐◓◑◒" "spinning"         "Working: Claude, omp, opencode, or any co
 s 2 "✦✧ ✓" "finished"         "Just finished (chime); ✓ stays until you look"
 s 3 "⚠" "needs you"           "Permission prompt or question: amber block, pulses (soft sound)"
 s 1 "✗" "error"               "Something failed"
-k "‖  /  ●"                 "Paused  /  new output in a background tab"
+k "‖  /  •"                 "Paused  /  new output in a background tab"
 k "3m  /  1h05"             "Right of the folder: how long it has been working / waiting / done"
-k "=^.^=  =O.O= !"           "The cat by + New tab: the whole window at a glance (kitty-cat)"
+k "=^.^=  =O.O= !"           "The cat by + New tab: the whole window at a glance, its colour too: amber needs you, blue working, green done (kitty-cat)"
 k "Ctrl+Alt+M"              "Mute / unmute the sounds (kitty-sounds plays each one)" mute
 h "Learn as you go"
-k "ninelives"               "Every NineLives setting at a glance, and how to change it"
+k "ninelives"               "Every NineLives setting at a glance (ninelives settings: change them in a list)"
 k "kitty-quests"            "Quests + badges: use a shortcut once to earn it (off / on)"
 k "kitty-tips"              "Show a random tip (kitty-tips all / off / on)"
 k "kitty-sounds"            "Hear each sound (volume 5-100 / classic / off / on)"
 k "kitty-cat"               "What the cat's faces mean (off / on)"
-k "kitty-buttons"           "The sidebar's search row and × (off / on)"
+k "kitty-buttons"           "The sidebar's search field, buttons and × (off / on)"
 h "Kittens (type in any tab)"
 k "kitten icat pic.png"     "Show an image right in the terminal"
 k "kitten diff a b"         "Side-by-side diff of two files or folders"

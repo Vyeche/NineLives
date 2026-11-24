@@ -3,11 +3,13 @@
 # (config/ in the NineLives repository); install with scripts/install.sh.
 #
 # Each tab:   " 12 ◐ name"         number right-aligned, a 2-cell status slot, the name (cut with …)
-#             "      folder   12m"  the last two folders, muted, not bold; at the right, how long
-#                                  the tab has been working / waiting / finished (from 1 minute on)
+#             "    ✳ folder   12m"  the agent mark, the last two folders, muted, not bold; at the
+#                                  right, how long the tab has been working / waiting / finished
 # Status icons are coloured on inactive tabs (palette colours, so both themes work): working blue,
-# finished green, sparkle gold, waiting-for-you amber, error red. On the active tab they stay the
-# tab's own colour.
+# finished green, sparkle gold, waiting-for-you amber, error red. They are the tab's one strong
+# signal: the number, the agent mark and the "new output" dot are quieter shades of the tab's own
+# colour (just above 4.5:1 / 3:1), and the branch is in the folder's colour. On the active tab
+# everything stays the tab's own colour.
 #
 # Each tab shows ONE marker in front of its name:
 #   ◐◓◑◒  spinning   working (Claude's status to kitty, or omp/opencode's title spinner, or a
@@ -18,7 +20,7 @@
 #   ⚠ (pulses ~6 s)  waiting for you (permission prompt / question); on inactive tabs it is a
 #                    filled amber chip, the strongest mark in the sidebar, and it stays filled.
 #                    (No desktop "attention" request: on COSMIC that pulls kitty to the front.)
-#   ✗                error            ‖ paused            ● new output in a background tab
+#   ✗                error            ‖ paused            • new output in a background tab
 # Sounds: NineLives' own (<kitty config folder>/sounds, built by scripts/make-sounds.py), each with its own
 # pitch shape: finished = two notes up, needs you = a rising "mrrp?" (the loudest), error = two low
 # notes down, badge = a glockenspiel run, new rank = a run up to a chord, a dragged tab landing = a
@@ -647,28 +649,39 @@ def _draw_title(data) -> str:
     else:
         icon_fg = getattr(fmt.fg, f"color{STATUS_COLOUR[base]}") if base in STATUS_COLOUR else ""
         name_fg = getattr(fmt.fg, f"color{NAME_COLOUR}")
-    if kind == "blocked" and not active:
+    quiet_text = quiet_icon = ""
+    if not active:
+        # one strong signal per tab (its status icon, and the name); the number, the agent mark and
+        # the "new output" dot are the theme's tab colour turned down to just above the limits
+        t = _theme()
+        fg, bg = t["inactive_tab_foreground"], t["inactive_tab_background"]
+        quiet_text, quiet_icon = _sgr_fg(_quiet(fg, bg, QUIET_TEXT)), _sgr_fg(_quiet(fg, bg, QUIET_ICON))
+    if not kind and icon.strip() in ACTIVITY_DOTS:
+        # new output in a background tab: a small dot that doesn't compete with ⚠ or ✓
+        slot = f"{quiet_icon}• "
+    elif kind == "blocked" and not active:
         # Waiting for you is the one state that must not be missed: a filled chip (the glyph cut
         # out of an amber cell) instead of a thin outline. While it pulses it swaps with the outline.
         slot = f"{icon_fg}\x1b[7m{slot[:1]}\x1b[27m{slot[1:]}"
     else:
         slot = f"{icon_fg}{slot}"
     index = _tab_number(data)
-    head = f" {index:>2} "
+    head = f"{quiet_text} {index:>2} {tab_fg}"
     try:
         pos = int(index or 0) - 1
     except ValueError:
         pos = 0
     if not active and 0 <= (_frame - _wave_start) - pos // 2 < 3:
         # a badge was just earned: a gold wave runs down the tab numbers (two tabs a frame)
-        head = f"{fmt.fg.color3}{fmt.bold}{head}{fmt.nobold}{tab_fg}"
+        head = f"{fmt.fg.color3}{fmt.bold} {index:>2} {fmt.nobold}{tab_fg}"
     room = max(1, width - INDENT)
     if active and _buttons_on() and room > 8:
         # the current tab gets a × at its right end: click it to close the tab (_sidebar_click)
-        # (width is kitty's max_title_length: the sidebar's real width, narrower in a small window)
-        shown = _fit(name, room - 2)
-        _buttons.setdefault("close_cols", {})[data.get("tab_id")] = INDENT + room - 1
-        line1 = f"{head}{slot}{tab_fg}{name_fg}{shown}{' ' * (room - 1 - _cells(shown))}×{tab_fg}"
+        # (width is kitty's max_title_length: the sidebar's real width, narrower in a small window);
+        # one column short of the edge, under the search row's + and in line with the times
+        shown = _fit(name, room - 3)
+        _buttons.setdefault("close_cols", {})[data.get("tab_id")] = INDENT + room - 2
+        line1 = f"{head}{slot}{tab_fg}{name_fg}{shown}{' ' * (room - 2 - _cells(shown))}× {tab_fg}"
     else:
         if active:
             _buttons.setdefault("close_cols", {}).pop(data.get("tab_id"), None)   # no ×: nothing to click
@@ -680,12 +693,11 @@ def _draw_title(data) -> str:
         took = ""                                  # too narrow for the time
     tail = ""
     fw = min(_cells(folder), max(8, avail - 3 - _cells(branch))) if branch else 0
-    if branch and avail - 3 - fw >= 4:
+    if branch and avail - 3 - fw >= min(_cells(branch), 6):     # whole, or 5 letters and …
         # a branch that isn't main/master, after the folder: "code/webapp ⌥ fix-login" (⌥: DejaVu has it)
         folder = _fit_start(folder, fw)
         b = _fit(branch, avail - 3 - _cells(folder))
-        bcol = "" if active else getattr(fmt.fg, f"color{BRANCH_COLOUR}")
-        tail = f" {bcol}⌥ {b}{tab_fg}"
+        tail = f" ⌥ {b}"                           # in the folder's colour: a detail, not a signal
         used = _cells(folder) + 3 + _cells(b)
     else:
         folder = _fit_start(folder, avail)
@@ -694,15 +706,13 @@ def _draw_title(data) -> str:
         tail += " " * (room - used - _cells(took) - 1) + took
     mark = _agent_mark(data.get("tab_id"))         # under the status icon: which agent runs here
     if mark:
-        mcol = "" if active else getattr(fmt.fg, f"color{AGENT_COLOUR}")
-        lead = f"{' ' * (INDENT - 2)}{mcol}{mark}{' ' * (2 - _cells(mark))}{tab_fg}"
+        lead = f"{' ' * (INDENT - 2)}{quiet_icon}{mark}{' ' * (2 - _cells(mark))}{tab_fg}"
     else:
         lead = " " * INDENT
     return f"{line1}\n{fmt.nobold}{lead}{folder}{tail}"
 
 
-BRANCH_COLOUR = 5            # magenta, like the branch in the prompt
-AGENT_COLOUR = 8             # the theme's dim grey: a quiet label, not a status
+ACTIVITY_DOTS = ("●", "•")   # kitty's "new output" symbol (tab_activity_symbol), old and new
 BRANCH_TTL = 5.0             # seconds a folder's branch is cached (drawing happens many times a second)
 _branches: dict = {}         # folder -> (checked at, branch or "")
 
@@ -862,6 +872,14 @@ def _tick(timer_id=None) -> None:
         if quests_off != _badge_shown.get("off", quests_off):
             animate = True
         _badge_shown["off"] = quests_off
+        buttons_on = _buttons_on()                 # kitty-buttons / the settings panel: the same
+        if buttons_on != _buttons.get("on", buttons_on):
+            animate = True
+        _buttons["on"] = buttons_on
+        for wid in [w for w, t0 in _press_at.items() if now - t0 > PRESS_LIMIT]:
+            _press_at.pop(wid, None)               # a release that never came: unlight the chip
+            _pressed.pop(wid, None)
+            animate = True
         for wid in list(_prev_state):
             if wid not in seen:
                 del _prev_state[wid]
@@ -933,7 +951,7 @@ _start_timer()
 # kitty draws the ghost from one line of text; we draw our own image instead, using kitty's own
 # text renderer (draw_single_line_of_text, transparent background) for the words.
 # Colours: see GHOST_DARK_THEME / GHOST_LIGHT_THEME below (cosmic-dark.conf / cosmic-light.conf).
-_ICON_RE = re.compile("[⠁-⣿◐-◓✓⚠✗‖●✦✧✶\U0001f514-]")
+_ICON_RE = re.compile("[⠁-⣿◐-◓✓⚠✗‖●•✦✧✶\U0001f514-]")
 # The card is the opposite of the theme so it always stands out: a bright card on the dark theme,
 # a dark card on the light theme. Picked when a drag starts, so it follows kitty's auto theme switch.
 GHOST_DARK_THEME = dict(        # cosmic-dark: bar #110e18, terminal #17141f, accent #e67e00
@@ -1250,6 +1268,10 @@ def _fit_vertical(bar, orig, data, *a, **k) -> tuple:
     if hidden and row < s.lines:
         try:
             s.cursor.x, s.cursor.y = 0, row
+            try:
+                s.cursor.reset_display_attrs()     # no underline or reverse from the tab above
+            except Exception:
+                pass
             s.cursor.bg = kt.as_rgb(kt.color_as_int(bar.draw_data.default_bg))
             s.cursor.fg = kt.as_rgb(kt.color_as_int(bar.draw_data.inactive_fg))
             s.cursor.bold = s.cursor.italic = False
@@ -1292,25 +1314,34 @@ def _note_close_row(bar, data) -> None:
 
 
 # ---- The search row and buttons (like Warp's sidebar) ----------------------------------------------
-# A row on top of the sidebar:  "  ❯   Search tabs…     ⚠2  +"  — click the words to search (the
-# Ctrl+Shift+Space box), ⚠ for the tab waiting for you (Ctrl+Alt+U), + for a new tab. A narrow
-# sidebar (small window, big font) gets shorter words; ⚠ and + always stay whole. The tab you're
-# on has a × at its right end that closes it (kitty can't tell where the mouse hovers, so it's the
-# current tab that gets it). kitty-buttons off hides the row and the ×.
+# A row on top of the sidebar: a search field, then a few buttons, each a filled chip:
+#     [ Search tabs      ] [⚠2] [⚙] [+]
+# Click the field to search your tabs (the Ctrl+Shift+Space box), ⚠ for the tab waiting for you
+# (Ctrl+Alt+U; only there while a tab waits), ⚙ for the NineLives settings (Ctrl+Shift+F2), + for a
+# new tab. A narrow sidebar (small window, big font) gets shorter words, then smaller chips; the
+# buttons always stay whole. The tab you're on has a × at its right end that closes it.
+# kitty can't tell where the mouse hovers over the sidebar (kitty 0.51 hands the tab bar no mouse
+# moves except during a tab drag or a text selection, and has no call for the pointer's position;
+# it does show a hand pointer there), so there is no hover look: the buttons look like buttons all
+# the time, a chip lights up in the accent colour while you hold it down, and only the current tab
+# gets a ×. kitty-buttons off hides the row and the ×.
 SEARCH_ROW_ID = -2           # a made-up entry like kitty's own "+" (-1); our click hook handles it
 BUTTONS_OFF = os.path.join(CONFIG_DIR, "buttons-off")
-_FINDER = '"${KITTY_CONFIG_DIRECTORY:-${XDG_CONFIG_HOME:-$HOME/.config}/kitty}/tab-finder.py"'
+_CONF_DIR_SH = '"${KITTY_CONFIG_DIRECTORY:-${XDG_CONFIG_HOME:-$HOME/.config}/kitty}'
+_FINDER = _CONF_DIR_SH + '/tab-finder.py"'
+_SETTINGS = _CONF_DIR_SH + '/settings.py"'
 ACTIONS = {   # the same actions as the keys in kitty.conf
     "search": f"launch --type=overlay --allow-remote-control --title current sh -c 'exec python3 {_FINDER} search'",
     "waiting": f"launch --type=background --allow-remote-control sh -c 'exec python3 {_FINDER} waiting'",
+    "settings": f"launch --type=overlay --allow-remote-control --title current sh -c 'exec python3 {_SETTINGS}'",
     "new": "new_tab_with_cwd",
     "close": "close_tab",
 }
 ROW_WIDTH = 30               # = tab_title_max_length: the row's width when nothing narrows the sidebar
 _buttons: dict = {}          # what the search row's columns do (per kitty window), the × columns (per tab)
-# the words in front of the buttons, longest first: a narrow sidebar (a small window, a big font)
-# gets a shorter one, and the buttons always stay whole
-SEARCH_LABELS = ("  ❯   Search tabs…", "  ❯   Search…", "  ❯   Find…", "  ❯", "")
+# the field's words, longest first: a narrow sidebar gets a shorter one (never cut), then none
+SEARCH_LABELS = ("Search tabs", "Search", "Find", "")
+GLYPHS = {"waiting": "⚠", "settings": "⚙", "new": "+"}   # ⚙ and ⚠ are in DejaVu Sans Mono
 
 
 def _buttons_on() -> bool:
@@ -1338,29 +1369,180 @@ def _line_width(bar=None) -> int:
     return max(1, width)
 
 
-def _row_layout(width: int, waiting: int) -> tuple:
+# ---- theme colours (live, so they follow kitty's light/dark switch) ----
+# (cosmic-dark's, for when kitty's options can't be read)
+THEME_FALLBACK = {
+    "background": (0x17, 0x14, 0x1f), "foreground": (0xeb, 0xe7, 0xf2),
+    "inactive_tab_background": (0x26, 0x21, 0x2f), "inactive_tab_foreground": (0xa5, 0x9f, 0xb3),
+    "active_tab_background": (0xe6, 0x7e, 0x00), "active_tab_foreground": (0x17, 0x14, 0x1f),
+    "selection_background": (0x4a, 0x3f, 0x5f), "selection_foreground": (0xf2, 0xef, 0xf7),
+    "color3": (0xcf, 0xae, 0x7c), "color7": (0xc8, 0xc3, 0xd2),
+}
+
+
+def _theme() -> dict:
+    """The theme's colours as (r, g, b), from kitty's live options."""
+    try:
+        from kitty.fast_data_types import get_options
+        from kitty.utils import color_as_int
+        o = get_options()
+        out = {}
+        for name, fallback in THEME_FALLBACK.items():
+            c = getattr(o, name, None)
+            if c is None and name == "selection_foreground":
+                c = o.foreground
+            v = color_as_int(c) if c is not None else None
+            out[name] = ((v >> 16) & 255, (v >> 8) & 255, v & 255) if v is not None else fallback
+        return out
+    except Exception:
+        return dict(THEME_FALLBACK)
+
+
+def _lum(rgb) -> float:
+    def ch(v):
+        v /= 255
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    r, g, b = rgb
+    return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b)
+
+
+def _contrast(a, b) -> float:
+    la, lb = _lum(a), _lum(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def _mix(a, b, t: float) -> tuple:
+    return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+
+
+_quiet_cache: dict = {}
+
+
+def _quiet(fg, bg, target: float) -> tuple:
+    """fg moved toward bg as far as it can go while keeping `target` contrast on bg (fg itself if
+    that is already lower): a quieter shade of the theme's own colour, never below the limit
+    (AGENTS.md: text 4.5:1, icons 3:1)."""
+    key = (fg, bg, target)
+    if key not in _quiet_cache:
+        lo, hi = 0.0, 1.0
+        if _contrast(fg, bg) > target:
+            for _ in range(24):
+                mid = (lo + hi) / 2
+                if _contrast(_mix(fg, bg, mid), bg) >= target:
+                    lo = mid
+                else:
+                    hi = mid
+        if len(_quiet_cache) > 64:
+            _quiet_cache.clear()
+        _quiet_cache[key] = _mix(fg, bg, lo)
+    return _quiet_cache[key]
+
+
+FIELD_CONTRAST = 1.45
+
+
+def _away(bg, toward, target: float) -> tuple:
+    """bg moved toward `toward` until it stands `target` apart from bg (or as far as it can go)."""
+    for i in range(1, 41):
+        c = _mix(bg, toward, i / 40)
+        if _contrast(c, bg) >= target:
+            return c
+    return toward
+
+
+def _sgr_fg(rgb) -> str:
+    return "\x1b[38;2;%d;%d;%dm" % rgb
+
+
+def _sgr_bg(rgb) -> str:
+    return "\x1b[48;2;%d;%d;%dm" % rgb
+
+
+QUIET_TEXT, QUIET_ICON = 4.6, 3.2     # just above AGENTS.md's 4.5:1 (text) and 3:1 (icons)
+
+
+def _row_colours() -> dict:
+    """SGR for the search row. The row sits on the inactive tab colour; the field is the terminal's
+    own background (an input, set into the row); the buttons are filled with the selection colour
+    (its text colour is the theme's pair for it); a held button is the accent (the active tab's
+    pair); ⚠ is the amber block it is on a waiting tab. Every pair is at least 4.5:1."""
+    t = _theme()
+    row_bg, row_fg = t["inactive_tab_background"], t["inactive_tab_foreground"]
+    # the field stands out from the row: lighter on a dark theme, white on a light one
+    toward = (255, 255, 255) if _lum(row_bg) > 0.4 else t["foreground"]
+    field = _away(row_bg, toward, FIELD_CONTRAST)
+    hint = t["color7"] if _contrast(t["color7"], field) >= 4.5 else t["foreground"]
+    chip_fg = t["selection_foreground"]
+    if _contrast(chip_fg, t["selection_background"]) < 4.5:
+        chip_fg = max((t["foreground"], t["background"]), key=lambda c: _contrast(c, t["selection_background"]))
+    warn_fg = max((t["background"], t["foreground"]), key=lambda c: _contrast(c, t["color3"]))
+    return {
+        "row": _sgr_bg(row_bg) + _sgr_fg(row_fg),
+        "field": _sgr_bg(field) + _sgr_fg(hint),
+        "chip": _sgr_bg(t["selection_background"]) + _sgr_fg(chip_fg),
+        "warn": _sgr_bg(t["color3"]) + _sgr_fg(warn_fg),
+        "pressed": _sgr_bg(t["active_tab_background"]) + _sgr_fg(t["active_tab_foreground"]),
+    }
+
+
+def _row_layout(width: int, waiting: int, pressed=None, colours=None) -> tuple:
     """(the search row's text, [(first col, last col, action)]) for a row `width` cells wide.
-    + is in the last column (where the current tab's × is), ⚠N (tabs waiting) in front of it; the
-    words get whatever room is left: the full label, a shorter one, only ❯, or nothing."""
+    Column 0 is left blank (the tabs' numbers start at 1), the field runs from column 1, and the
+    buttons are chips at the right with a cell of row between them, + last with its glyph in
+    column width - 2 (where the current tab's × and the times end). A narrower row gets shorter
+    words, then 1-cell chips, then no words; ⚙, then ⚠, are left out only when even that doesn't
+    fit. A button's click area starts one column before its glyph and runs up to the next button
+    (the last one to the sidebar's edge); the field's is everything to the left of the first.
+    `pressed`: the action held down right now, drawn in the accent colour."""
+    c = colours or _row_colours()
     warn = f"⚠{waiting}" if waiting else ""
-    for left in SEARCH_LABELS:
-        for sep in ("  ", " "):                    # between ⚠N and +
-            right = f"{warn}{sep}+" if warn else "+"
-            if _cells(left) + 1 + _cells(right) <= width:       # (a blank cell before ⚠ and +)
-                break
-        else:
-            continue
-        break
-    else:
-        left, sep, warn = "", "", ""                # no room even for ⚠N: + alone
-    plus = max(0, width - 1)
-    if not warn:
-        gap = max(0, plus - _cells(left))
-        return f"{left}{' ' * gap}+", [(0, plus - 2, "search"), (plus - 1, width, "new")]
-    wc = plus - len(sep) - _cells(warn)              # where ⚠ is
-    gap = max(0, wc - _cells(left))
-    cols = [(0, wc - 2, "search"), (max(0, wc - 1), plus - 2, "waiting"), (plus - 1, width, "new")]
-    return f"{left}{' ' * gap}{AMBER}{warn}{FG}{sep}+", cols
+    every = (["waiting"] if warn else []) + ["settings", "new"]
+
+    def chips(names, pad):
+        return [(n, f" {g} " if pad else g) for n in names
+                for g in [warn if n == "waiting" else GLYPHS[n]]]
+
+    def left_of(cs):                               # the chips' first column: the last glyph at width - 2
+        pad = _cells(cs[-1][1]) > 1
+        return width - (0 if pad else 1) - (sum(_cells(t) for _, t in cs) + len(cs) - 1)
+
+    tries = [(every, pad, label) for pad in (True, False) for label in SEARCH_LABELS[:-1]]
+    tries += [(every, pad, "") for pad in (True, False)]
+    tries += [([n for n in every if n != "settings"], False, label) for label in SEARCH_LABELS]
+    tries += [(["new"], False, label) for label in SEARCH_LABELS]
+    pick = None
+    for names, pad, label in tries:
+        cs = chips(names, pad)
+        need = _cells(label) + 4 if label else 0   # margin, " label ", a gap
+        if left_of(cs) >= need:
+            pick = (cs, pad, label)
+            break
+    if pick is None:
+        pick = (chips(["new"], False), False, "")
+    cs, pad, label = pick
+    left = max(0, left_of(cs))
+    out = c["row"] + (" " if left else "")
+    field_w = left - 2                             # between column 0 and the gap before the chips
+    if field_w > 0:
+        words = f" {label}" if label else ""
+        out += (c["pressed"] if pressed == "search" else c["field"]) + words + " " * (field_w - _cells(words))
+        out += c["row"] + " "
+    elif left > 1:
+        out += " " * (left - 1)
+    cols, col = [], left
+    for i, (n, t) in enumerate(cs):
+        if i:
+            out += c["row"] + " "
+            col += 1
+        glyph = col + (1 if pad else 0)
+        cols.append([glyph - 1, glyph, n])
+        out += (c["pressed"] if pressed == n else c["warn"] if n == "waiting" else c["chip"]) + t
+        col += _cells(t)
+    out += c["row"] + " " * max(0, width - col)
+    for i in range(len(cols) - 1):
+        cols[i][1] = cols[i + 1][0] - 1
+    cols[-1][1] = width
+    return out, [(0, cols[0][0] - 1, "search")] + [tuple(x) for x in cols]
 
 
 def _search_row(width=None, wid=None) -> str:
@@ -1369,15 +1551,13 @@ def _search_row(width=None, wid=None) -> str:
     sidebar's real width."""
     if not _buttons_on():
         return ""
-    # ❯ sits in the number column like "+ New tab"'s +, and is the search box's own prompt mark.
-    # Nothing waiting: no ⚠ at all (a grey hazard sign with nothing behind it only puzzles); tabs
-    # waiting: an amber ⚠ with the count (amber means "needs you" everywhere); click = go there.
-    text, cols = _row_layout(width or ROW_WIDTH, _cat.get("blocked", 0))
+    held = _pressed.get(wid) if wid is not None else None
+    pressed = held[1][1] if held and held[1][0] == "button" else None
+    text, cols = _row_layout(width or ROW_WIDTH, _cat.get("blocked", 0), pressed)
     _buttons["cols"] = cols
     if wid is not None:
         _buttons.setdefault("cols_by", {})[wid] = cols
     return text
-
 
 def _cols_for(wid) -> list:
     """The search row's buttons as last drawn in this kitty window."""
@@ -1399,6 +1579,18 @@ def _run(name: str) -> None:
 
 
 _pressed: dict = {}          # os window id -> the region a press of ours landed on
+_press_at: dict = {}         # os window id -> when (a lost release mustn't leave a chip lit)
+PRESS_LIMIT = 3.0
+
+
+def _redraw(tm=None) -> None:
+    try:
+        for m in ([tm] if tm is not None else get_boss().all_tab_managers):
+            m.mark_tab_bar_dirty()
+        from kitty.fast_data_types import wakeup_main_loop
+        wakeup_main_loop()
+    except Exception:
+        pass
 
 
 def _region(tm, x, y):
@@ -1440,10 +1632,16 @@ def _sidebar_click(tm, x, y, button, action) -> bool:
                 _pressed.pop(wid, None)
                 return False
             _pressed[wid] = (button, here)
+            _press_at[wid] = time.monotonic()
+            if here[0] == "button" and button == GLFW_MOUSE_BUTTON_LEFT:
+                _redraw(tm)                         # the chip lights up while it's held
             return True
         pressed = _pressed.pop(wid, None)
+        _press_at.pop(wid, None)
         if pressed is None:
             return False                            # kitty saw the press: it gets the release
+        if pressed[1][0] == "button":
+            _redraw(tm)                             # and goes back to normal
         if pressed == (GLFW_MOUSE_BUTTON_LEFT, here):
             if here == ("hidden",):
                 tab = tm.tab_for_id(tm.tab_bar._vye_hidden[1])
@@ -1519,7 +1717,7 @@ def _note_layout(bar, data, shown_ids, hidden) -> None:
         if crow >= 0 and at in nums:
             # the current tab's folder line (agent mark, folder, branch), read back from the cells
             text += f"active: {nums[at]}\ndrawn folder: {_screen_text(bar, crow + 1).strip()}\n"
-        for row, glyphs in ((top.y.start if top is not None else -1, "⚠+"), (crow, "×")):
+        for row, glyphs in ((top.y.start if top is not None else -1, "⚠⚙+"), (crow, "×")):
             line = _screen_text(bar, row)
             for ch in glyphs:
                 if ch in line:
@@ -1643,42 +1841,58 @@ NEW_TAB_LABEL = "  +   New tab"   # "+" in the number column, the words in the n
 
 
 AMBER, GREEN = "\x1b[33m", "\x1b[32m"
+# The cat's colour follows its mood (palette colours, so both themes work; each is at least 3.9:1 on
+# the sidebar in either theme): amber when a tab needs you (the colour of ⚠), gold for a badge, green
+# when a tab just finished, red for an error, blue while tabs work (the spinner's colour), lavender
+# asleep, and the sidebar's own colour when idle.
+CAT_COLOUR = {"alert": "\x1b[33m", "badge": "\x1b[33m", "happy": "\x1b[32m", "startled": "\x1b[31m",
+              "working": "\x1b[34m", "asleep": "\x1b[35m", "idle": ""}
+CAT_WIDTH = 9                # the widest face and its extras ("=-.-= zZz", "=^ω^= ♪♪♪")
 
 
-def _cat_face() -> str:
-    """The cat's current frame, e.g. "=^.^= ~" (with colour codes). Most important mood first:
-    alert (a tab needs you; "2!" = two tabs) · cheering (badge; ♛ = new rank) · happy (just finished) · startled
-    (error) · watching (working; the tail swishes) · idle (blinks now and then) · asleep (zZ)."""
-    if os.path.exists(CAT_OFF):
-        return ""
+def _cat_mood() -> tuple:
+    """(mood, face) for the cat at the end of "+ New tab". Most important mood first: alert (a tab
+    needs you; "2!" = two tabs) · badge (cheering; ♛ = new rank) · happy (just finished) ·
+    startled (error) · working (watching; the tail swishes) · asleep (zZ) · idle (blinks now and
+    then)."""
     now = time.monotonic()
     if _cat["blocked"]:                # status first: a waiting tab beats any celebration
         n = _cat["blocked"]
         bang = (str(n) if n > 1 else "") + "!"
         if _cat["fresh_block"] and (_frame // 4) % 2:
             bang = " " * len(bang)
-        return f"=O.O= {AMBER}{bang}{FG}"
+        return "alert", f"=O.O= {bang}"
     if _badge_shown["until"] > now:
-        crown = f"{GOLD}♛{FG}" if _badge_shown.get("rank") else ""
-        return f"=^▽^={crown}{GOLD}{TWINKLE[_frame % len(TWINKLE)]}{FG}"
+        crown = "♛" if _badge_shown.get("rank") else ""
+        return "badge", f"=^▽^={crown}{TWINKLE[_frame % len(TWINKLE)]}"
     if now - _cat["done_at"] < 4:
         # one note per tab in the current run of finishes (the streak), up to three
         notes = min(3, _streak["step"]) if now - _streak["at"] < 4 else 1
-        return f"=^ω^= {GREEN}{'♪' * max(1, notes)}{FG}"
+        return "happy", f"=^ω^= {'♪' * max(1, notes)}"
     if now - _cat["error_at"] < 4:
-        return "=>.<= "
+        return "startled", "=>.<= "
     if _cat["working"]:
-        return "=^.^= " + "~-"[(_frame // 4) % 2]
+        return "working", "=^.^= " + "~-"[(_frame // 4) % 2]
     quiet = now - _cat["quiet_since"]
     if quiet >= SLEEP_AFTER:
         if quiet >= SLEEP_AFTER + 60:
-            return "=-.-= zZ"            # fully asleep: no more redraws
-        return "=-.-= " + ("z", "zz", "zZ", "zZz")[(_frame // 12) % 4]
-    return "=-.-=" if _frame % 48 == 0 else "=^.^="
+            return "asleep", "=-.-= zZ"            # fully asleep: no more redraws
+        return "asleep", "=-.-= " + ("z", "zz", "zZ", "zZz")[(_frame // 12) % 4]
+    return "idle", "=-.-=" if _frame % 48 == 0 else "=^.^="
+
+
+def _cat_face() -> str:
+    """The cat's current frame in its mood's colour, e.g. "\x1b[34m=^.^= ~\x1b[39m" ("" when
+    kitty-cat off hides it)."""
+    if os.path.exists(CAT_OFF):
+        return ""
+    mood, face = _cat_mood()
+    col = CAT_COLOUR.get(mood, "")
+    return f"{col}{face}{FG}" if col else face
 
 
 def _visible(s: str) -> str:
-    return re.sub("\x1b\\[[0-9;]*m", "", s)
+    return re.sub("\x1b\\[[0-9;:]*m", "", s)
 
 
 NEW_TAB_LABELS = (NEW_TAB_LABEL, "  +   New", "  +")   # shorter ones for a narrow sidebar
@@ -1688,17 +1902,20 @@ def _new_tab_label(width=None) -> str:
     """ "+ New tab" with the cat at its right end, and under it the next quest (or the badge
     just earned), both fitted to `width` cells (the sidebar's; ROW_WIDTH if not known)."""
     width = width or ROW_WIDTH
-    line1, line2 = _fit(NEW_TAB_LABEL, width), ""
+    line1, line2 = next((l for l in NEW_TAB_LABELS if _cells(l) <= width), ""), ""
     try:
         cat = _cat_face()
         _cat["drawn"] = cat
         if cat:
-            # the cat ends 2 cells short of the right edge; a narrow sidebar shortens the words
-            # first (the + says it), then leaves the cat out
-            end = max(0, width - 2)
-            label = next((l for l in NEW_TAB_LABELS if _cells(l) + 2 + _cells(_visible(cat)) <= end), None)
+            # the cat starts at a fixed column, so its face stays put while its extras (z, zZz, ♪♪)
+            # come and go, and the words don't flip between "New tab" and "New"; it ends by the
+            # column of the search row's + and the ×. A narrow sidebar shortens the words first
+            # (the + says it), then leaves the cat out.
+            seen = _cells(_visible(cat))
+            at = max(0, width - 1 - max(CAT_WIDTH, seen))
+            label = next((l for l in NEW_TAB_LABELS if _cells(l) + 2 <= at), None)
             if label is not None:
-                line1 = label + " " * (end - _cells(label) - _cells(_visible(cat))) + cat
+                line1 = label + " " * (at - _cells(label)) + cat
     except Exception:
         pass
     try:
@@ -1762,7 +1979,7 @@ QUESTS = (
     ("drag", "Shuffler", "drag a tab  reorder", "Drag a tab in the sidebar to reorder it (or Ctrl+Shift+←/→)"),
     ("rename", "Name Tag", "Ctrl+Shift+R  rename", "Ctrl+Shift+R gives the current tab your own name"),
     ("prompts", "Time Traveller", "Ctrl+Shift+Z  prev cmd", "Ctrl+Shift+Z / X jumps to the previous / next command you ran"),
-    ("output", "Replay", "Ctrl+Shift+G  last output", "Ctrl+Shift+G shows the last command's output on its own"),
+    ("output", "Replay", "Ctrl+Shift+G  output", "Ctrl+Shift+G shows the last command's output on its own"),
     ("scrollback", "Deep Diver", "Ctrl+Shift+H  history", "Ctrl+Shift+H opens the scrollback in a pager (/ searches, q quits)"),
     ("hints", "Link Hunter", "Ctrl+Shift+E  open link", "Ctrl+Shift+E opens any link on screen by typing its hint letter"),
     ("unicode", "Glyph Finder", "Ctrl+Shift+U  emoji", "Ctrl+Shift+U types any emoji or symbol by name"),
@@ -2028,27 +2245,46 @@ def _tab_clicked(tm, x, y, button, action) -> None:
         pass
 
 
+def _shortest_fit(texts, room: int) -> str:
+    """The first of `texts` (longest first) that fits `room` cells, or "": a shorter wording instead
+    of a word cut in half."""
+    return next((t for t in texts if t and _cells(t) <= room), "")
+
+
+def _hint_forms(hint: str) -> tuple:
+    """A quest's sidebar hint, "Ctrl+Alt+←  go to pane", and its shorter forms: the key with a
+    one-space gap, then the key alone (the key is what the quest teaches)."""
+    key, _, verb = hint.partition("  ")
+    return (hint, f"{key} {verb}" if verb else "", key)
+
+
 def _quest_line(width=None) -> str:
-    """The line under "+ New tab": the badge just earned (sparkling), else the next quest. Cut to
-    `width` cells (the mark and its gap are 6)."""
+    """The line under "+ New tab": the badge just earned (sparkling), else the next quest. It fits
+    `width` cells (the mark and its gap are 6) by taking a shorter wording, never by cutting one;
+    with no room for any, the mark alone."""
     if os.path.exists(QUESTS_OFF):
         return ""
     room = (width or ROW_WIDTH) - 6
     now = time.monotonic()
     n = len(_earned)
-    if room < 2:                                   # no room for words: the ★ count alone
-        return f"{GOLD}{'★' + str(n):>3}{FG}"
+    mark, words = f"{'★' + str(n):>3}", ()
     if _badge_shown["until"] > now and _badge_shown["id"] in QUEST_BY_ID:
-        spark = TWINKLE[_frame % len(TWINKLE)]
+        mark = f"{TWINKLE[_frame % len(TWINKLE)]:>3}"
+        badge = QUEST_BY_ID[_badge_shown["id"]][1]
         if _badge_shown.get("rank"):
-            return f"{GOLD}{spark:>3}{FG}   " + _fit(f"new rank: {_rank(n)[0]}!", room)
-        if _badge_shown.get("mastered"):
-            return f"{GOLD}{spark:>3}{FG}   " + _fit(f"mastered: {QUEST_BY_ID[_badge_shown['id']][1]}!", room)
-        return f"{GOLD}{spark:>3}{FG}   " + _fit(f"badge: {QUEST_BY_ID[_badge_shown['id']][1]}!", room)
-    if _coach["until"] > now:
-        return f"{GOLD}{'→':>3}{FG}   " + _fit(_coach["text"], room)
-    q = _next_quest()
-    return f"{GOLD}{'★' + str(n):>3}{FG}   " + _fit(q[2] if q else f"all done: {RANKS[-1][1]}!", room)
+            words = (f"new rank: {_rank(n)[0]}!", f"{_rank(n)[0]}!")
+        elif _badge_shown.get("mastered"):
+            words = (f"mastered: {badge}!", f"mastered {badge}", f"{badge}!", "mastered!")
+        else:
+            words = (f"badge: {badge}!", f"{badge}!", "badge!")
+    elif _coach["until"] > now:
+        mark = f"{'→':>3}"
+        words = (_coach["text"], _coach["text"].replace(" also", ""), _coach["text"].split(" ")[0])
+    else:
+        q = _next_quest()
+        words = _hint_forms(q[2]) if q else (f"all done: {RANKS[-1][1]}!", "all done!")
+    text = _shortest_fit(words, room)
+    return f"{GOLD}{mark}{FG}" + (f"   {text}" if text else "")
 
 
 def _quest_hit(qid: str) -> None:

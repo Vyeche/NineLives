@@ -112,6 +112,23 @@ class Fmt:
     bold, nobold = "<b>", "</b>"
 
 
+LIGHT_THEME = {          # cosmic-light.conf's
+    "background": (0xf7, 0xf6, 0xf9), "foreground": (0x1c, 0x1a, 0x21),
+    "inactive_tab_background": (0xe2, 0xe1, 0xe6), "inactive_tab_foreground": (0x55, 0x51, 0x5c),
+    "active_tab_background": (0x00, 0x52, 0x5a), "active_tab_foreground": (0xff, 0xff, 0xff),
+    "selection_background": (0xa9, 0xd0, 0xd4), "selection_foreground": (0x1a, 0x18, 0x1e),
+    "color3": (0x80, 0x62, 0x2a), "color7": (0x5b, 0x57, 0x63),
+}
+
+
+def rgb_pairs(sgr: str) -> tuple:
+    """(background, foreground) of a "\x1b[48;2;r;g;bm\x1b[38;2;r;g;bm" pair."""
+    import re
+    bg = tuple(int(x) for x in re.search(r"48;2;(\d+);(\d+);(\d+)", sgr).groups())
+    fg = tuple(int(x) for x in re.search(r"38;2;(\d+);(\d+);(\d+)", sgr).groups())
+    return bg, fg
+
+
 # ---- loading tab_bar.py fresh for every test --------------------------------------------------
 class TabBarCase(unittest.TestCase):
     def setUp(self):
@@ -247,17 +264,67 @@ class QuestOfTheDay(TabBarCase):
 
 
 class Buttons(TabBarCase):
-    """The search row on top (❯ Search tabs…  ⚠  +) and the × on the current tab."""
+    """The search row on top (a field, then ⚠ ⚙ + as chips) and the × on the current tab."""
     def test_search_row_and_its_buttons(self):
         for blocked in (0, 2):
             self.tb._cat["blocked"] = blocked
             row = self.tb._visible(self.tb._search_row())
-            self.assertTrue(row.startswith("  ❯   Search tabs…"))
-            self.assertEqual(self.tb._cells(row), 30)           # + in the current tab's × column
+            self.assertTrue(row.startswith("  Search tabs "), row)    # the words alone: no ❯, no …
+            self.assertNotIn("…", row)
+            self.assertEqual(self.tb._cells(row), 30)
+            self.assertEqual(row.index("+"), 28)                # in the current tab's × column
             cols = self.tb._buttons["cols"]
             for c0, c1, name in cols:
                 part = row[c0:c1 + 1]
-                self.assertIn({"search": "Search", "waiting": "⚠", "new": "+"}[name], part, (name, part))
+                self.assertIn({"search": "Search", "waiting": "⚠", "settings": "⚙", "new": "+"}[name], part, (name, part))
+                if name != "search":
+                    self.assertEqual(row[c0 + 1], self.tb.GLYPHS[name])   # sidebar.txt points at c0 + 1
+
+    def test_field_and_chips_are_filled_and_readable_in_both_themes(self):
+        for theme in (self.tb.THEME_FALLBACK, LIGHT_THEME):
+            with mock.patch.object(self.tb, "_theme", lambda t=theme: dict(t)):
+                c = self.tb._row_colours()
+                text, _ = self.tb._row_layout(30, 2)
+            for part in ("field", "chip", "warn", "pressed"):
+                self.assertIn(c[part], text if part != "pressed" else c["pressed"])
+                bg, fg = rgb_pairs(c[part])
+                self.assertGreaterEqual(self.tb._contrast(fg, bg), 4.5, (part, theme is LIGHT_THEME))
+            row_bg, _ = rgb_pairs(c["row"])
+            for part in ("field", "chip"):          # a field and buttons you can tell from the row
+                self.assertGreater(self.tb._contrast(rgb_pairs(c[part])[0], row_bg), 1.2, part)
+            self.assertNotEqual(rgb_pairs(c["field"])[0], rgb_pairs(c["chip"])[0])
+
+    def test_a_held_button_lights_up_until_it_is_released(self):
+        fdt = sys.modules["kitty.fast_data_types"]
+        fdt.GLFW_MOUSE_BUTTON_LEFT, fdt.GLFW_PRESS, fdt.GLFW_RELEASE = 0, 1, 2
+        self.boss.combine = lambda a: None
+        self.tb._search_row(30, 1)
+        R = types.SimpleNamespace
+        bar = R(window_geometry=R(left=0, right=310, top=0, bottom=400), cell_width=10, cell_height=20,
+                tab_extents=[R(tab_id=-2, y=R(start=0, end=0))])
+        tm = FakeTabManager([FakeTab()])
+        tm.tab_bar, tm.active_tab = bar, None
+        pressed = self.tb._row_colours()["pressed"]
+        x = (self.tb._buttons["cols"][1][0] + 1) * 10 + 5                    # the ⚙
+        self.assertTrue(self.tb._sidebar_click(tm, x, 5, 0, 1))
+        self.assertGreater(tm.dirty, 0)                                       # redrawn at once
+        self.assertIn(pressed + " ⚙ ", self.tb._search_row(30, 1))
+        self.assertTrue(self.tb._sidebar_click(tm, x, 5, 0, 2))
+        self.assertNotIn(pressed, self.tb._search_row(30, 1))
+        # a release that never comes (the pointer left the window): the tick puts it out
+        self.window(FakeTab())
+        self.tb._sidebar_click(tm, x, 5, 0, 1)
+        self.tb._press_at[1] -= self.tb.PRESS_LIMIT + 1
+        self.tb._tick()
+        self.assertNotIn(pressed, self.tb._search_row(30, 1))
+
+    def test_turning_the_buttons_off_redraws_at_once(self):
+        tm = self.window(FakeTab())
+        self.tb._tick()
+        before = tm.dirty
+        open(self.kitty_path("buttons-off"), "w").close()
+        self.tb._tick()
+        self.assertGreater(tm.dirty, before)
 
     def test_waiting_count_shows_and_no_hazard_sign_without_it(self):
         self.tb._cat["blocked"] = 2
@@ -274,8 +341,9 @@ class Buttons(TabBarCase):
         a, b = FakeTab(), FakeTab()
         self.window(a, b, active=0)
         line1 = Draw.strip(self.tb.draw_title(Draw.data(self, a, 1, "my work", "/w/x")).split("\n")[0])
-        self.assertTrue(line1.endswith("×"), line1)
+        self.assertTrue(line1.endswith("× "), line1)         # under the search row's +
         self.assertEqual(self.tb._cells(line1), 30)
+        self.assertEqual(line1.index("×"), 28)
         other = Draw.strip(self.tb.draw_title(Draw.data(self, b, 2, "other", "/w/x")).split("\n")[0])
         self.assertNotIn("×", other)
 
@@ -299,6 +367,12 @@ class Buttons(TabBarCase):
         self.assertTrue(self.tb._sidebar_click(tm, c0 * 10 + 5, 5, 0, 2))        # release: runs
         self.assertIn("tab-finder.py", ran[0])
         self.assertNotIn("waiting", self.tb._earned)                 # a click isn't the key
+        c0 = self.tb._buttons["cols"][2][0] + 1                       # the ⚙: the settings list
+        self.tb._sidebar_click(tm, c0 * 10 + 5, 5, 0, 1)
+        self.tb._sidebar_click(tm, c0 * 10 + 5, 5, 0, 2)
+        self.assertIn("settings.py", ran[1])
+        self.assertIn("--type=overlay", ran[1])
+        del ran[1]
         # a press elsewhere (on a tab) released on a button does nothing and goes to kitty
         self.assertFalse(self.tb._sidebar_click(tm, 50, 300, 0, 1))
         self.assertFalse(self.tb._sidebar_click(tm, c0 * 10 + 5, 5, 0, 2))
@@ -307,8 +381,6 @@ class Buttons(TabBarCase):
 class NarrowSidebar(TabBarCase):
     """A small window or a big font makes kitty's sidebar narrower (at most a third of the window):
     the search row, its buttons, "+ New tab" and the × follow the real width."""
-    GLYPH = {"search": None, "waiting": "⚠", "new": "+"}
-
     def test_search_row_fits_every_width_and_keeps_its_buttons(self):
         for waiting in (0, 1, 12):
             for width in range(5, 41):          # kitty's sidebar is 6+ columns: 5+ cells a line
@@ -316,42 +388,39 @@ class NarrowSidebar(TabBarCase):
                 row = self.tb._visible(text)
                 where = (width, waiting, row)
                 self.assertEqual(self.tb._cells(row), width, where)
-                self.assertEqual(row[width - 1], "+", where)          # + in the × column
-                # one of the labels, then the buttons: never an ellipsis eating a button
-                self.assertRegex(row, r"^(  ❯   Search tabs…|  ❯   Search…|  ❯   Find…|  ❯)? *(⚠\d+ {1,2})?\+$", where)
-                if width >= 4 + len(str(waiting)) and waiting:          # " ⚠N +"
+                self.assertEqual(row[width - 2], "+", where)          # + in the × column
+                self.assertNotIn("…", row, where)                     # words are left out, never cut
+                self.assertRegex(row, r"^ *((Search tabs|Search|Find) +)?(⚠\d+ +)?(⚙ +)?\+ ?$", where)
+                if width >= 16 and waiting:
                     self.assertIn(f"⚠{waiting}", row, where)
-                last = -1
+                if width >= 10:
+                    self.assertIn("⚙", row, where)
+                last = -2                                             # (a chip in column 0 starts at -1)
                 for c0, c1, name in cols:
                     if c1 < c0:
-                        continue                                      # no room for the words
+                        continue                                      # no room for the field
                     self.assertGreater(c0, last, where)               # in order, never overlapping
                     last = c1
-                    if self.GLYPH[name]:
-                        self.assertIn(self.GLYPH[name], row[max(0, c0):c1 + 1], (name,) + where)
-                    if name == "waiting":
-                        self.assertEqual(row[c0 + 1], "⚠", where)    # sidebar.txt points at c0 + 1
-                    if name == "new":
-                        self.assertEqual(c0 + 1, width - 1, where)
+                    if name != "search":
+                        self.assertEqual(row[c0 + 1], self.tb.GLYPHS[name], (name,) + where)
+                self.assertEqual(cols[-1][2], "new", where)
+                self.assertEqual(cols[-1][1], width, where)           # + reaches the sidebar's edge
 
-    def test_shorter_words_before_losing_any(self):
-        rows = {w: self.tb._visible(self.tb._row_layout(w, 1)[0]) for w in (30, 20, 16, 12, 5)}
-        self.assertIn("Search tabs…", rows[30])
-        self.assertIn("Search…", rows[20])
-        self.assertIn("Find…", rows[16])
-        self.assertEqual(rows[12], "  ❯    ⚠1  +")
-        self.assertEqual(rows[5], " ⚠1 +")
-        self.assertEqual(self.tb._visible(self.tb._row_layout(4, 1)[0]), "   +")   # + before ⚠
+    def test_shorter_words_then_smaller_chips(self):
+        rows = {w: self.tb._visible(self.tb._row_layout(w, 1)[0]) for w in (30, 25, 21, 16, 12)}
+        self.assertEqual(rows[30], "  Search tabs      ⚠1   ⚙   + ")
+        self.assertEqual(rows[25], "  Search      ⚠1   ⚙   + ")
+        self.assertEqual(rows[21], "  Find    ⚠1   ⚙   + ")
+        self.assertEqual(rows[16], "  Find   ⚠1 ⚙ + ")             # 1-cell chips before no words
+        self.assertEqual(rows[12], " ⚠1   ⚙   + ")                # no room for words: buttons only
+        self.assertEqual(self.tb._visible(self.tb._row_layout(5, 1)[0]), "⚠1 + ")   # ⚙ goes before ⚠
 
-    def test_full_width_looks_as_before(self):
-        left = "  ❯   Search tabs…"
-        self.assertEqual(self.tb._row_layout(30, 0), (left + " " * 11 + "+", [(0, 27, "search"), (28, 30, "new")]))
+    def test_full_width_layout(self):
+        text, cols = self.tb._row_layout(30, 0)
+        self.assertEqual(self.tb._visible(text), "  Search tabs           ⚙   + ")
+        self.assertEqual(cols, [(0, 22, "search"), (23, 26, "settings"), (27, 30, "new")])
         text, cols = self.tb._row_layout(30, 2)
-        self.assertEqual(self.tb._visible(text), left + " " * 7 + "⚠2  +")
-        self.assertEqual(cols, [(0, 23, "search"), (24, 27, "waiting"), (28, 30, "new")])
-        cat = self.tb._cat_face()
-        self.assertEqual(self.tb._new_tab_label(30).split("\n")[0],
-                         "  +   New tab" + " " * (28 - 13 - self.tb._cells(cat)) + cat)
+        self.assertEqual(cols, [(0, 17, "search"), (18, 22, "waiting"), (23, 26, "settings"), (27, 30, "new")])
 
     def bar(self, columns, wid=1):
         R = types.SimpleNamespace
@@ -380,17 +449,19 @@ class NarrowSidebar(TabBarCase):
             for r in (rows[0], rows[2]):
                 for line in self.tb._visible(r.title).split("\n"):
                     self.assertLessEqual(self.tb._cells(line), width, line)
-            self.assertRegex(self.tb._visible(rows[0].title), r"⚠1 {1,2}\+$")
-        self.assertEqual(self.tb._cols_for(1)[-1], (14, 16, "new"))
-        self.assertEqual(self.tb._cols_for(2)[-1], (28, 30, "new"))
+            self.assertRegex(self.tb._visible(rows[0].title), r"⚠1 +⚙ +\+ $")
+        self.assertEqual(self.tb._cols_for(1)[-1], (13, 16, "new"))
+        self.assertEqual(self.tb._cols_for(2)[-1], (27, 30, "new"))
         # a click on the narrow window's + is the new-tab button there, not search
         R = types.SimpleNamespace
         ext = [R(tab_id=-2, y=R(start=0, end=0))]
         bar = R(window_geometry=R(left=0, right=170, top=0, bottom=400), cell_width=10, cell_height=20,
                 tab_extents=ext)
         tm = R(tab_bar=bar, active_tab=None, os_window_id=1)
-        self.assertEqual(self.tb._region(tm, 155, 5), ("button", "new"))
-        self.assertEqual(self.tb._region(tm, 135, 5), ("button", "waiting"))
+        self.assertEqual(self.tb._region(tm, 145, 5), ("button", "new"))
+        self.assertEqual(self.tb._region(tm, 125, 5), ("button", "settings"))
+        self.assertEqual(self.tb._region(tm, 95, 5), ("button", "waiting"))
+        self.assertEqual(self.tb._region(tm, 35, 5), ("button", "search"))
 
     def test_new_tab_label_fits(self):
         for width in range(5, 31):
@@ -405,16 +476,137 @@ class NarrowSidebar(TabBarCase):
         d["max_title_length"] = 20
         line1 = Draw.strip(self.tb.draw_title(d).split("\n")[0])
         self.assertEqual(self.tb._cells(line1), 20)
-        self.assertEqual(line1.index("×"), 19)
-        self.assertEqual(self.tb._buttons["close_cols"][a.id], 19)
+        self.assertEqual(line1.index("×"), 18)
+        self.assertEqual(self.tb._buttons["close_cols"][a.id], 18)
         # the close button is found per tab: another window's current tab has its own column
         R = types.SimpleNamespace
         self.tb._buttons["close_row"] = {1: 2}
         bar = R(window_geometry=R(left=0, right=210, top=0, bottom=400), cell_width=10, cell_height=20,
                 tab_extents=[R(tab_id=a.id, y=R(start=2, end=3))])
         tm.tab_bar = bar
-        self.assertEqual(self.tb._region(tm, 195, 45), ("close",))
+        self.assertEqual(self.tb._region(tm, 185, 45), ("close",))
         self.assertIsNone(self.tb._region(tm, 100, 45))
+
+
+class NoCuts(TabBarCase):
+    """Our own lines take a shorter wording instead of a word cut in half (or cut off silently)."""
+    def states(self):
+        tb, now = self.tb, self.tb.time.monotonic()
+        yield "quest", lambda: None
+        for qid, *_ in tb.QUESTS:                                  # every quest as today's
+            yield f"quest {qid}", lambda q=qid: tb._earned.update(
+                {x[0]: "d" for x in tb.QUESTS if x[0] != q})
+        yield "all done", lambda: tb._earned.update({x[0]: "d" for x in tb.QUESTS})
+        for kind in ("badge", "rank", "mastered"):
+            yield kind, lambda k=kind: tb._badge_shown.update(
+                id="waiting", until=now + 5, rank=k == "rank", mastered=k == "mastered")
+        yield "coach", lambda: tb._coach.update(text="Alt+3 also gets here", until=now + 5)
+
+    def test_new_tab_and_quest_lines_never_cut_a_word(self):
+        tb = self.tb
+        for name, setup in self.states():
+            for width in range(5, 41):
+                tb._earned.clear()
+                tb._badge_shown.update(id=None, until=0.0)
+                tb._coach["until"] = 0.0
+                setup()
+                for line in tb._visible(tb._new_tab_label(width)).split("\n"):
+                    self.assertLessEqual(tb._cells(line), width, (name, width, line))
+                    self.assertNotIn("…", line.replace("Alt+1…9", ""), (name, width, line))
+
+    def test_the_quest_keeps_its_key_when_the_words_dont_fit(self):
+        tb = self.tb
+        with mock.patch.object(tb, "_next_quest", lambda: tb.QUEST_BY_ID["scrollback"]):
+            self.assertEqual(tb._visible(tb._quest_line(30)), " ★0   Ctrl+Shift+H  history")
+            self.assertEqual(tb._visible(tb._quest_line(26)), " ★0   Ctrl+Shift+H history")
+            self.assertEqual(tb._visible(tb._quest_line(20)), " ★0   Ctrl+Shift+H")
+            self.assertEqual(tb._visible(tb._quest_line(12)), " ★0")
+
+    def test_every_quest_hint_fits_the_usual_sidebar(self):
+        for q in self.tb.QUESTS:
+            self.assertLessEqual(self.tb._cells(q[2]), self.tb.ROW_WIDTH - 6, q[2])
+
+    def test_the_cat_stays_put_and_the_words_dont_flip(self):
+        tb = self.tb
+        tb._cat["quiet_since"] = tb.time.monotonic() - tb.SLEEP_AFTER - 1     # dozing: z, zz, zZ, zZz
+        for width in range(5, 41):
+            firsts = set()
+            for f in range(0, 48, 12):
+                tb._frame = f
+                firsts.add(tb._visible(tb._new_tab_label(width)).split("\n")[0].split("=")[0])
+            self.assertEqual(len(firsts), 1, (width, firsts))
+
+
+class Calm(TabBarCase):
+    """One strong signal per tab: the status icon and the name; numbers, agent marks, the new-output
+    dot and the branch are quiet, and still readable (text 4.5:1, icons 3:1) in both themes."""
+    def test_quiet_colours_stay_above_the_limits_in_both_themes(self):
+        tb = self.tb
+        for t in (tb.THEME_FALLBACK, LIGHT_THEME):
+            fg, bg = t["inactive_tab_foreground"], t["inactive_tab_background"]
+            text, icon = tb._quiet(fg, bg, tb.QUIET_TEXT), tb._quiet(fg, bg, tb.QUIET_ICON)
+            self.assertGreaterEqual(tb._contrast(text, bg), 4.5)
+            self.assertGreaterEqual(tb._contrast(icon, bg), 3.0)
+            self.assertLess(tb._contrast(text, bg), tb._contrast(fg, bg))     # quieter than before
+            self.assertLess(tb._contrast(icon, bg), tb._contrast(text, bg))
+
+    def test_new_output_is_a_small_quiet_dot(self):
+        a, b = FakeTab(), FakeTab()
+        self.window(a, b, active=0)
+        d = Draw.data(self, b, 2, "notes", "/w/notes")
+        d["activity_symbol"] = "● "                   # an older kitty.conf's big dot, too
+        out = self.tb.draw_title(d).split("\n")[0]
+        quiet = self.tb._sgr_fg(self.tb._quiet(self.tb.THEME_FALLBACK["inactive_tab_foreground"],
+                                               self.tb.THEME_FALLBACK["inactive_tab_background"], self.tb.QUIET_ICON))
+        self.assertIn(quiet + "• ", out)
+        self.assertNotIn("●", out)
+
+    def test_number_and_agent_mark_are_quiet_and_the_branch_is_not_coloured(self):
+        a, b = FakeTab(), FakeTab()
+        self.window(a, b, active=0)
+        wd = Draw.repo(self, "fix-parser")
+        with mock.patch.object(self.tb, "_foreground_name", lambda w: "claude"):
+            line1, line2 = self.tb.draw_title(Draw.data(self, b, 2, "✳ Fix", wd)).split("\n")
+        t = self.tb.THEME_FALLBACK
+        fg, bg = t["inactive_tab_foreground"], t["inactive_tab_background"]
+        self.assertTrue(line1.startswith(self.tb._sgr_fg(self.tb._quiet(fg, bg, self.tb.QUIET_TEXT)) + "  2 "), line1)
+        self.assertIn(self.tb._sgr_fg(self.tb._quiet(fg, bg, self.tb.QUIET_ICON)) + "✳", line2)
+        self.assertNotIn("<fg5>", line2)              # no magenta branch: a detail, not a signal
+        self.assertIn("⌥ fix-parser", Draw.strip(line2))
+
+    def test_the_active_tab_stays_one_colour(self):
+        a = FakeTab()
+        self.window(a)
+        out = self.tb.draw_title(Draw.data(self, a, 1, "here", "/w/x"))
+        self.assertNotIn("38;2", out)
+
+
+class CatColour(TabBarCase):
+    def test_each_mood_has_its_colour(self):
+        tb, now = self.tb, self.tb.time.monotonic()
+        tb._cat.update(blocked=1, fresh_block=False)
+        self.assertTrue(tb._cat_face().startswith("\x1b[33m=O.O="))           # amber, like ⚠
+        tb._cat.update(blocked=0, working=True)
+        self.assertTrue(tb._cat_face().startswith("\x1b[34m=^.^="))           # blue, like the spinner
+        tb._cat.update(working=False, done_at=now)
+        self.assertTrue(tb._cat_face().startswith("\x1b[32m=^ω^="))           # green: finished
+        tb._cat.update(done_at=-99.0, error_at=now)
+        self.assertTrue(tb._cat_face().startswith("\x1b[31m=>.<="))           # red: error
+        tb._cat.update(error_at=-99.0, quiet_since=now - tb.SLEEP_AFTER - 61)
+        self.assertTrue(tb._cat_face().startswith("\x1b[35m=-.-= zZ"))        # lavender: asleep
+        tb._cat["quiet_since"] = now
+        self.assertTrue(tb._cat_face().startswith("="))                        # idle: the row's own
+        for face in (tb._cat_face(),):
+            self.assertTrue(tb._visible(face).startswith("="))
+
+    def test_mood_colours_read_on_the_sidebar_in_both_themes(self):
+        dark = {1: "#c98a8a", 2: "#8fae8c", 3: "#cfae7c", 4: "#8a9cc6", 5: "#b391c1"}
+        light = {1: "#a5514f", 2: "#4d7650", 3: "#80622a", 4: "#4c6699", 5: "#82609a"}
+        h = lambda x: tuple(int(x[i:i + 2], 16) for i in (1, 3, 5))
+        for pal, bg in ((dark, (0x26, 0x21, 0x2f)), (light, (0xe2, 0xe1, 0xe6))):
+            for sgr in set(self.tb.CAT_COLOUR.values()) - {""}:
+                n = int(sgr[3])
+                self.assertGreaterEqual(self.tb._contrast(h(pal[n]), bg), 3.0, (n, pal[n]))
 
 
 class ConfigFolder(TabBarCase):
