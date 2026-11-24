@@ -66,7 +66,7 @@ for you, tabs with an error, then the tabs nearest yours. The last line names th
 `⋯ hidden: 1–2, 10`; click that line to go to the first hidden tab. Tabs keep their real numbers, so
 **Alt+N** still goes to tab N.
 Which tabs are shown is written to `~/.local/state/ninelives/sidebar.txt` whenever it changes, with
-their agent marks (`agents: 3:π 12:✳`), the current tab's folder line as kitty drew it (`drawn folder:
+their agent marks (`agents: 3:π 12:✳`), which kitty wrote it (`kitty:` and its process id), the current tab's folder line as kitty drew it (`drawn folder:
 ✳ code/api ⌥ fix-parser`), where the buttons are and the columns kitty really drew `⚠`, `+` and `×`
 in (`check.sh` compares them).
 

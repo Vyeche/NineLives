@@ -241,21 +241,45 @@ for o in json.load(sys.stdin):
 print(json.dumps(out))'
     before="$(k ls | python3 -c "$desc")"
     dry="$(bash scripts/test-kitty.sh relaunch --dry-run 2>&1)"
+    # The restored agents' marks must be there within 1.5 s of the new kitty's first sidebar
+    # (an agent still starting when the new kitty first drew its tab used to get its mark only at
+    # some later redraw, seconds later). sidebar.txt is watched while the restart runs: its
+    # "kitty:" line (the writer's pid) tells the new kitty's first write from the old one's.
+    side="$NL_TEST_DIR/state/sidebar.txt"; poll="$NL_TEST_DIR/marks-poll.txt"; : > "$poll"; rm -f "$poll.stop"
+    oldk="$(sed -n 's/^kitty: //p' "$side" 2>/dev/null)"
+    ( for _ in $(seq 1 600); do
+        [ -e "$poll.stop" ] && break
+        lay="$(cat "$side" 2>/dev/null)"
+        printf '%s|%s|%s|%s\n' "$(date +%s.%N)" "$(sed -n 's/^kitty: //p' <<< "$lay")" \
+          "$(sed -n 's/^shown: //p' <<< "$lay")" "$(sed -n 's/^agents: //p' <<< "$lay")" >> "$poll"
+        sleep 0.05
+      done ) &
+    poller=$!
     if out="$(bash scripts/test-kitty.sh relaunch 2>&1)"; then
-      # the marks come back at once, with nothing touching kitty (no focus changes: those redraw).
-      # An agent still starting when the new kitty first drew its tab used to get its mark only at
-      # some later redraw, seconds later. (agents: lists the tabs shown, so only those count)
-      want=""; miss="?"
-      for _ in $(seq 1 15); do
-        lay="$(cat "$NL_TEST_DIR/state/sidebar.txt" 2>/dev/null)"; shown=" $(sed -n 's/^shown: //p' <<< "$lay") "
-        want="$(for m in 3:π 12:✳ 13:✳; do [[ "$shown" == *" ${m%%:*} "* ]] && printf '%s ' "$m"; done)"
-        got="$(sed -n 's/^agents: //p' <<< "$lay")"
-        miss="$(for m in $want; do grep -qw "$m" <<< "$got" || printf '%s ' "$m"; done)"
-        [ -n "$want" ] && [ -z "$miss" ] && break; sleep 0.1
-      done
-      if [ -n "$want" ] && [ -z "$miss" ]; then ok "after the restart every shown agent tab has its mark within 1.5 s (${want% })"
-      else fail "marks 1.5 s after the restart: missing '${miss:-?}' of '${want:-nothing shown}' (agents: $got)"; fi
-      sleep 1.5; after="$(k ls | python3 -c "$desc")"
+      sleep 1.6; touch "$poll.stop"; wait "$poller" 2>/dev/null   # (watch past the 1.5 s)
+      # (agents: lists the tabs shown, so only those count)
+      marks="$(python3 - "$poll" "$oldk" <<'PY'
+import sys
+rows = [l.rstrip("\n").split("|") for l in open(sys.argv[1], encoding="utf-8")]
+new = [(float(t), s.split(), a.split()) for t, k, s, a in (r for r in rows if len(r) == 4) if k and k != sys.argv[2]]
+if not new:
+    print("fail the new kitty never wrote sidebar.txt")
+    sys.exit()
+t0, last = new[0][0], ""
+for t, shown, agents in new:
+    if t > t0 + 1.5:
+        break
+    want = [m for m in ("3:π", "12:✳", "13:✳") if m.split(":")[0] in shown]
+    last = f"shown {' '.join(shown)}; agents {' '.join(agents) or 'none'}"
+    if want and all(m in agents for m in want):
+        print(f"ok {t - t0:.1f} s after the new sidebar ({' '.join(want)})")
+        sys.exit()
+print(f"fail not all marks 1.5 s after the new sidebar ({last})")
+PY
+)"
+      if [ "${marks%% *}" = ok ]; then ok "after the restart every shown agent tab has its mark: ${marks#ok }"
+      else fail "agent marks after the restart: ${marks#fail }"; fi
+      after="$(k ls | python3 -c "$desc")"
       k focus-tab --match index:10; k action toggle_layout stack; sleep 0.5      # unzoom tab 11
       unzoomed="$(k ls | python3 -c 'import json,sys; t=json.load(sys.stdin)[0]["tabs"][10]; print(t["layout"], len(t["layout_state"].get("pairs", {})))')"
       resumed="$(grep -c "claude --resume abc-123" "$NL_TEST_DIR/agents.log" 2>/dev/null)"
@@ -340,7 +364,7 @@ print(len(plain), "ok" if plain and all(n == f for n, f in plain) else plain)')"
           && ! ls -l "/proc/$kpid/fd" 2>/dev/null | grep -q "kitty-relaunch.*lock"; then
         ok "the restarted kitty doesn't inherit the restart's internals (its marker, its lock)"
       else fail "the restarted kitty inherited _KR_DETACHED or the restart's lock (pid ${kpid:-none})"; fi
-    else fail "relaunch: $(tail -3 <<< "$out")"; fi
+    else touch "$poll.stop"; fail "relaunch: $(tail -3 <<< "$out")"; fi
   else fail "test kitty did not start"; fi
 fi
 

@@ -133,6 +133,34 @@ class NormalRestart(unittest.TestCase):
 
 
 
+class OldLockHeld(NormalRestart):
+    """A kitty started by kitty-relaunch.sh before v1.1.1 kept the restart's lock file open (fd 9)
+    and locked for its whole life, so the next restart of it stopped with "another restart is
+    already running". The lock moved to a new file name for that: a restart must go through while
+    something holds the old one."""
+    OLD_LOCK = "kitty-relaunch.lock"       # the name before v1.1.1 (git show b65e7b0^:scripts/kitty-relaunch.sh)
+
+    def setUp(self):
+        super().setUp()
+        os.makedirs(f"{self.d}/cache/ninelives", exist_ok=True)
+        self.holder = subprocess.Popen(
+            [sys.executable, "-c", "import fcntl, sys, time\n"
+             "f = open(sys.argv[1], 'w'); fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+             "print('held', flush=True); time.sleep(60)", f"{self.d}/cache/ninelives/{self.OLD_LOCK}"],
+            stdout=subprocess.PIPE, text=True)
+        self.assertEqual(self.holder.stdout.readline().strip(), "held")
+
+    def tearDown(self):
+        self.holder.kill()
+        self.holder.wait(timeout=10)
+        self.holder.stdout.close()
+        super().tearDown()
+
+    def test_restarts_the_kitty_it_runs_in_from_the_background(self):
+        super().test_restarts_the_kitty_it_runs_in_from_the_background()
+        self.assertNotIn("another restart is already running", self.log)
+
+
 class NoSystemdUserManager(NormalRestart):
     """No systemd user manager to ask (another init, or no XDG_RUNTIME_DIR): the restart used to
     stop silently there (pipefail on the failed systemctl); it keeps the environment instead."""

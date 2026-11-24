@@ -1495,6 +1495,8 @@ def _note_layout(bar, data, shown_ids, hidden) -> None:
         agents = [f"{nums[t.tab_id]}:{_agents[t.tab_id][1]}" for t in data
                   if t.tab_id in shown_ids and t.tab_id > 0 and _agents.get(t.tab_id, (0, ""))[1]]
         text += f"agents: {' '.join(agents) or 'none'}\n"
+        # which kitty wrote it: after a restart, tells the new kitty's first write from the old one's
+        text += f"kitty: {os.getpid()}\n"
         info = getattr(bar, "_vye_hidden", None)
         g = bar.window_geometry
 

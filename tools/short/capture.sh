@@ -45,7 +45,8 @@ setup() {  # setup [dark|light]: a test kitty for the Short, quests off (no badg
 geometry() {  # geometry: the sidebar's cell grid from sidebar.txt → GEOM="LEFT TOP CELL_W CELL_H COLUMNS"
   GEOM=""
   for _ in $(seq 1 30); do
-    GEOM="$(sed -n 's/^cells: //p' "$T/state/sidebar.txt" 2>/dev/null)"; [ -n "$GEOM" ] && break; sleep 0.2
+    GEOM="$(sed -n 's/^cells: //p' "$T/state/sidebar.txt" 2>/dev/null)" || true   # (not written yet: try again)
+    [ -n "$GEOM" ] && break; sleep 0.2
   done
   [ -n "$GEOM" ] || { echo "${TAKE:-capture.sh}: no cell grid in sidebar.txt" >&2; exit 1; }
   read -r _ _ CW CH COLS <<< "$GEOM"
@@ -200,18 +201,20 @@ take_take2() {
   beat "Restart kitty,|keep every tab and split."
   sleep 1.2
   ev relaunch start
-  local since; since="$(date +%s)"
+  local oldk; oldk="$(sed -n 's/^kitty: //p' "$T/state/sidebar.txt" 2>/dev/null)" || true   # who wrote it so far
   tk relaunch > "$WORK/take2.relaunch.log" 2>&1 || fail "the relaunch failed (see $WORK/take2.relaunch.log)"
   ev relaunch done
   # the restored Claude tabs get their ✳ marks back (v1.0.2), as the new window opens: the take is
   # only good if all three show by the time the relaunch is done (a mark checked while its agent
   # was still starting stayed off until the next redraw, seconds later; tab_bar.py now looks again
   # within half a second, so this is a guard: take again if it fires)
-  local marks=0 done_at; done_at="$(date +%s.%N)"
+  local marks=0 done_at lay newk; done_at="$(date +%s.%N)"
   for _ in $(seq 1 100); do
-    if [ "$(stat -c %Y "$T/state/sidebar.txt" 2>/dev/null || echo 0)" -ge "$since" ]; then   # the new kitty's
-      marks="$(sed -n 's/^agents: //p' "$T/state/sidebar.txt" | grep -o '✳' | wc -l)"
-      [ "$marks" -ge 3 ] && break
+    lay="$(cat "$T/state/sidebar.txt" 2>/dev/null)" || lay=""
+    newk="$(sed -n 's/^kitty: //p' <<< "$lay")"
+    if [ -n "$newk" ] && [ "$newk" != "$oldk" ]; then      # written by the new kitty (its pid), not the old one
+      marks="$(sed -n 's/^agents: //p' <<< "$lay" | grep -o '✳' | wc -l)" || true   # no ✳ yet: 0, look again
+      [ "${marks:-0}" -ge 3 ] && break
     fi
     sleep 0.1
   done
