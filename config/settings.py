@@ -381,6 +381,10 @@ def _row(key: str, conf: str, state: str, chosen: bool, cols: int) -> str:
         styled = f"‹ {styled} ›" if chosen and shown != val else styled
     else:
         styled = f"{MUTED}{shown}{R}" if muted else shown
+    if cells(label) + gap + cells(shown) > avail:
+        # a very narrow pane: one plain line cut to fit, so it never wraps (row_at counts lines)
+        text = cut(f"{label}  {val}", avail)
+        return f" {B}❯{R} {B}{text}{R}" if chosen else f"   {text}"
     if chosen:
         return f" {B}❯{R} {B}{label}{R}{' ' * gap}{styled}"
     return f"   {label}{' ' * gap}{styled}"
@@ -390,7 +394,7 @@ def render(conf: str, state: str, sel: int, cols: int, lines: int, header: str =
     """The whole screen: the title, a notice if any, the rows, the highlighted row's description and
     the keys. The rows start on line TOP, so a click's line says which row it hit (row_at)."""
     title = "NineLives settings"
-    top = f" {B}{title}{R}"
+    top = f" {B}{cut(title, max(1, cols - 2))}{R}"
     room = cols - 2 - cells(title) - 3
     # the kitty version and the config folder, or only the version: never cut in the middle
     shown = next((h for h in (header, header.split(" · ")[0]) if h and cells(h) <= room), "")
@@ -421,6 +425,27 @@ def row_at(y: int) -> int:
 UP, DOWN, RIGHT, LEFT = ("\x1b[A", "\x1bOA"), ("\x1b[B", "\x1bOB"), ("\x1b[C", "\x1bOC"), ("\x1b[D", "\x1bOD")
 KEYS = UP + DOWN + RIGHT + LEFT
 MOUSE_RE = re.compile(r"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
+PARTIAL_RE = re.compile(r"\x1b(?:\[[0-9;<?]*|O)?\Z")   # an escape sequence still on its way
+ESC_WAIT = 0.05              # how long a lone Esc waits for the rest of an arrow key
+
+
+def incomplete(chunk: str) -> bool:
+    """Does the read end part-way through an escape sequence? A read can stop anywhere, so an
+    arrow key can arrive as "\x1b" and then "[A"; reading on keeps it from closing the panel."""
+    return bool(PARTIAL_RE.search(chunk))
+
+
+def read_keys(fd: int) -> str:
+    """One read, plus whatever completes an escape sequence it stopped inside (briefly; a lone Esc
+    is still Esc)."""
+    import select
+    chunk = os.read(fd, 1024).decode("utf-8", "ignore")
+    while incomplete(chunk) and select.select([fd], [], [], ESC_WAIT)[0]:
+        more = os.read(fd, 1024).decode("utf-8", "ignore")
+        if not more:
+            break
+        chunk += more
+    return chunk
 
 
 def keys(chunk: str):
@@ -519,7 +544,7 @@ def panel(conf: str, state: str) -> int:
             size = os.get_terminal_size()
             out.write(render(conf, state, sel, size.columns, size.lines, header, stale_notice(conf, state)))
             out.flush()
-            for key in keys(os.read(fd, 1024).decode("utf-8", "ignore")):
+            for key in keys(read_keys(fd)):
                 sel, cmd = handle(key, sel)
                 if cmd == "quit":
                     return 0

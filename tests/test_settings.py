@@ -34,7 +34,7 @@ class SettingsCase(unittest.TestCase):
         self.state = os.path.join(self.tmp.name, "state")
         os.makedirs(os.path.join(self.conf, "sounds"))
         os.makedirs(self.state)
-        env = {k: v for k, v in os.environ.items() if k not in ("KITTY_LISTEN_ON", "NINELIVES_QUIET")}
+        env = {k: v for k, v in os.environ.items() if k not in ("KITTY_LISTEN_ON", "NINELIVES_QUIET", "VISUAL", "EDITOR")}
         env.update(HOME=self.tmp.name, KITTY_CONFIG_DIRECTORY=self.conf, NINELIVES_STATE=self.state)
         self.env = mock.patch.dict(os.environ, env, clear=True)
         self.env.start()
@@ -235,6 +235,27 @@ class Keys(SettingsCase):
         got = list(self.s.keys("\x1b[Aj\x1b[<0;5;7M\x1b[<0;5;7mq\x1b[1;5C\x1b"))
         self.assertEqual(got, ["\x1b[A", "j", ("mouse", 0, 5, 7, True), ("mouse", 0, 5, 7, False), "q", "", "\x1b"])
 
+    def test_an_arrow_split_across_reads_is_still_an_arrow(self):
+        s = self.s
+        for part in ("\x1b", "\x1b[", "j\x1bO", "\x1b[<0;5"):
+            self.assertTrue(s.incomplete(part), part)
+        for whole in ("\x1b[A", "q", "\x1b[<0;5;7M", ""):
+            self.assertFalse(s.incomplete(whole), whole)
+        r, w = os.pipe()
+        try:
+            os.write(w, b"\x1b")
+            def late(*_a, **_k):
+                os.write(w, b"[A")              # the rest of the key arrives while it waits
+                return ([r], [], [])
+            with mock.patch("select.select", side_effect=late):
+                self.assertEqual(list(s.keys(s.read_keys(r))), ["\x1b[A"])
+            os.write(w, b"\x1b")               # a lone Esc: nothing more comes
+            with mock.patch("select.select", return_value=([], [], [])):
+                self.assertEqual(list(s.keys(s.read_keys(r))), ["\x1b"])
+        finally:
+            os.close(r)
+            os.close(w)
+
     def test_moving_skips_the_blank_row_and_wraps(self):
         s = self.s
         edit = s.ROWS.index("edit")
@@ -307,6 +328,14 @@ class Drawing(SettingsCase):
         self.assertNotIn("■", out)
         self.assertNotIn("0.51…", out)                          # the header is dropped, never cut
         self.assertIn("Enter change · Esc close", plain(self.s.render(self.conf, self.state, 0, 28, 16)))
+
+    def test_a_very_narrow_pane_never_wraps(self):
+        for cols in range(8, 30):
+            for sel in range(len(self.s.ROWS)):
+                lines = plain(self.s.render(self.conf, self.state, sel, cols, 16,
+                                            "kitty 0.51.0 · ~/.config/kitty")).split("\r\n")
+                for line in lines:
+                    self.assertLessEqual(self.s.cells(line.replace("\x1b[H\x1b[2J", "")), cols, (cols, sel, line))
 
     def test_wide_window_keeps_values_near_their_labels(self):
         line = next(l for l in plain(self.s.render(self.conf, self.state, 1, 200, 24)).split("\r\n") if "Sounds" in l)
