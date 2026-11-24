@@ -68,7 +68,7 @@ jobs:
 
   quick:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20   # ci-apt.sh may need three tries (up to ~14 min) on a slow mirror
     permissions:
       contents: read
     steps:
@@ -86,7 +86,7 @@ jobs:
   kitty:
     needs: quick
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30   # ci-apt.sh may need three tries (up to ~14 min) on a slow mirror
     permissions:
       contents: read
     steps:
