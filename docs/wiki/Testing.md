@@ -117,7 +117,9 @@ ffmpeg -f x11grab -framerate 16 -video_size 160x40 -i :97+0,660 -t 2.6 \
 ```
 
 `NL_TEST_SCENE=none bash scripts/test-kitty.sh start` starts the test kitty with one empty tab instead
-of one tab per status, for building a scene of your own.
+of one tab per status, for building a scene of your own. `NL_TEST_CAT_DICE=SEED` gives its cat seeded
+dice, and a move named in `state/cat-move` (`wink`, `look-left`, `tail`, …) plays at its next roll, so a
+recording shows the same cat every time (only the test kitty's copy of `tab_bar.py` changes).
 
 ## Recording the GIFs
 The GIFs in the README and the wiki (`docs/images/gifs/`) and the Getting started stills
@@ -138,7 +140,7 @@ the result before committing, and keep each GIF small (they are
 (`check.sh` included) is using the test kitty.
 
 ## The YouTube Short
-`tools/short/` makes the vertical Short the same way: `capture.sh` records two takes from the hidden
+`tools/short/` makes the vertical Short the same way: `capture.sh` records three takes from the hidden
 test kitty (real shortcuts pressed with `scripts/xkey.py`, states written to the fake agents, the
 restart through `test-kitty.sh relaunch`) with a meta file of captions and event times, and
 `compose_short.py` puts them together with the sounds the stubs logged, over a music bed
