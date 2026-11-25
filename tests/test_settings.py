@@ -73,7 +73,7 @@ class Reading(SettingsCase):
     def test_defaults_with_no_files(self):
         got = {k: self.s.value(k, self.conf, self.state, compact=True) for k in self.s.ROWS if k and k != "edit"}
         self.assertEqual(got, {"sounds": "on", "volume": "100%", "soundset": "NineLives", "cat": "shown",
-                               "quests": "on", "buttons": "shown", "tips": "on"})
+                               "quests": "on", "buttons": "shown", "commands": "off", "tips": "on"})
 
     def test_switch_files_read_back(self):
         for key, (_label, name, (on, off), _d) in self.s.TOGGLES.items():
@@ -122,7 +122,19 @@ class Reading(SettingsCase):
         self.s.set_volume(self.conf, 35)
         self.assertEqual(self.s.listing(self.conf, self.state).splitlines(),
                          ["Sounds: on", "Volume: 35%", "Sound set: NineLives", "The cat: hidden",
-                          "Quests: on · ★0/16", "Sidebar buttons: shown", "Prompt tips: on"])
+                          "Quests: on · ★0/16", "Sidebar buttons: shown", "Full commands in tab names: off",
+                          "Prompt tips: on"])
+
+    def test_full_commands_is_off_until_its_file_is_there(self):
+        # the other switches are on while their file is missing; this one is the other way round:
+        # short tab names by default, full-commands (kitty-commands full) turns whole lines on
+        self.assertEqual(self.s.value("commands", self.conf, self.state), "off")
+        self.assertTrue(self.s.change("commands", self.conf, 1))
+        self.assertTrue(os.path.exists(self.path("full-commands")))
+        self.assertEqual(self.s.value("commands", self.conf, self.state), "on")
+        self.assertTrue(self.s.change("commands", self.conf, 1))
+        self.assertFalse(os.path.exists(self.path("full-commands")))
+        self.played.assert_not_called()                              # no chime for this one
 
 
 class Changing(SettingsCase):

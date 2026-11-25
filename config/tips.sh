@@ -38,6 +38,7 @@ _kitty_tips=(
   "The cat next to + New tab sums up every tab: =O.O= ! means one needs you (kitty-cat explains)"
   "Sounds too loud? kitty-sounds volume 40 turns the tab sounds down (5-100)"
   "A tab you're looking at doesn't chime when it finishes: you can already see it"
+  "A running command's tab shows just its program (git push), never its arguments; kitty-commands full shows it all"
 )
 _nl_state="${NINELIVES_STATE:-$HOME/.local/state/ninelives}"
 # macOS (new, not yet tried on a real Mac): afplay plays the .wav copies install.sh makes
@@ -116,7 +117,8 @@ kitty-cat() {
            "  =^ω^= ♪    one just finished (green; ♪♪ ♪♪♪: several in a row)" \
            "  =>.<=      something failed (red)" \
            "  =^▽^=✦     you earned a badge (gold; ♛ = new rank)" \
-           "  =-.-= zZ   nothing happening for 3 minutes: napping (lavender)" \
+           "  =-.-= zZ   nothing happening for 3 minutes, or at night: napping (lavender)" \
+           "  =^.^=      nothing going on (ginger): it blinks, winks, glances, flicks its tail" \
            "kitty-cat off hides it, kitty-cat on brings it back.";;
   esac
 }
@@ -131,6 +133,22 @@ kitty-buttons() {
            "  +                a new tab in this folder" \
            "  ×                on the tab you're on: close it" \
            "kitty-buttons off hides them, kitty-buttons on brings them back.";;
+  esac
+}
+kitty-commands() {
+  case "${1:-}" in
+    full|on)   touch "$_nl_conf"/full-commands && echo "tab names show whole command lines, arguments too (kitty-commands short hides them again)";;
+    short|off) rm -f "$_nl_conf"/full-commands && echo "tab names show a command's program and subcommand only";;
+    *)   printf '%s\n' "While a command runs, its tab is named after it. A command line can hold a password" \
+           "or a token, so the sidebar and the search box show only the program and its subcommand:" \
+           "  cd app && npm run build -- --token=…   →   npm run build" \
+           "  git push origin main                  →   git push" \
+           "  sudo -u db psql -c \"…\"                →   psql" \
+           "Names that agents set (✳ Fix the login bug) and names you give a tab (Ctrl+Shift+R) stay." \
+           "Now: $([ -e "$_nl_conf"/full-commands ] && echo "whole command lines" || echo "program and subcommand")." \
+           "kitty-commands full shows whole command lines, kitty-commands short goes back." \
+           "(kitty's own window title, in the taskbar and Alt+Tab, and its \"command finished\"" \
+           " notification still show the whole line.)";;
   esac
 }
 _nl_quest_list() {  # print quests.txt, wrapping each description under itself to fit the window
@@ -183,6 +201,7 @@ ninelives() {  # every NineLives switch at a glance, and the command that change
        _nl_row quests "★$n/16, $rank$( ((m)) && echo ", ✪$m mastered")" "kitty-quests [off]"
        [ -n "$next" ] && printf '  %-8s %s\n' "" "${D}next: $next$R"; fi
   _nl_row buttons "$([ -e "$c/buttons-off" ] && echo hidden || echo shown)" "kitty-buttons [off|on]"
+  _nl_row commands "$([ -e "$c/full-commands" ] && echo "whole command lines" || echo "program + subcommand")" "kitty-commands [full|short]"
   _nl_row tips "$([ -e "$c/tips-off" ] && echo off || echo on)" "kitty-tips [all|off|on]"
   # is kitty running the installed tab_bar.py? (it keeps the first-loaded one until a restart)
   local running="" installed=""

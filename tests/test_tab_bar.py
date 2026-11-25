@@ -9,8 +9,10 @@ the promise that it degrades safely when a kitty update renames them.
 """
 import importlib.util
 import os
+import random
 import sys
 import tempfile
+import time
 import types
 import unicodedata
 import unittest
@@ -129,6 +131,19 @@ def rgb_pairs(sgr: str) -> tuple:
     return bg, fg
 
 
+class Dice:
+    """The cat's dice, scripted: random() hands out `rolls` in turn (then 0.99: no move), choice()
+    takes the `pick`-th of what it is offered."""
+    def __init__(self, *rolls, pick=0):
+        self.rolls, self.pick = list(rolls), pick
+
+    def random(self):
+        return self.rolls.pop(0) if self.rolls else 0.99
+
+    def choice(self, seq):
+        return seq[self.pick % len(seq)]
+
+
 # ---- loading tab_bar.py fresh for every test --------------------------------------------------
 class TabBarCase(unittest.TestCase):
     def setUp(self):
@@ -153,6 +168,11 @@ class TabBarCase(unittest.TestCase):
         self.tb.IS_MACOS = False        # the Linux paths, on any system (class MacOS tries the other)
         self.played.reset_mock()
         self.tb._last_sound.update(at=-99.0, priority=-1)
+        # the cat's clock and dice: daytime, and dice that never start a move (CatMoves sets its own),
+        # so no test depends on the hour it runs at or on luck
+        self.real_night = self.tb._night
+        self.tb._night = lambda: False
+        self.tb._cat_rng = Dice()
 
     def tearDown(self):
         self.popen.stop()
@@ -595,18 +615,25 @@ class CatColour(TabBarCase):
         tb._cat.update(error_at=-99.0, quiet_since=now - tb.SLEEP_AFTER - 61)
         self.assertTrue(tb._cat_face().startswith("\x1b[35m=-.-= zZ"))        # lavender: asleep
         tb._cat["quiet_since"] = now
-        self.assertTrue(tb._cat_face().startswith("="))                        # idle: the row's own
-        for face in (tb._cat_face(),):
-            self.assertTrue(tb._visible(face).startswith("="))
+        self.assertTrue(tb._cat_face().startswith("\x1b[38;5;130m=^.^="))     # idle: ginger
+        self.assertEqual(tb._visible(tb._cat_face()), "=^.^=")
 
     def test_mood_colours_read_on_the_sidebar_in_both_themes(self):
+        # cosmic-dark/light's palette, and the sidebar under the cat as measured from test-kitty shots
         dark = {1: "#c98a8a", 2: "#8fae8c", 3: "#cfae7c", 4: "#8a9cc6", 5: "#b391c1"}
         light = {1: "#a5514f", 2: "#4d7650", 3: "#80622a", 4: "#4c6699", 5: "#82609a"}
         h = lambda x: tuple(int(x[i:i + 2], 16) for i in (1, 3, 5))
+        steps = (0, 95, 135, 175, 215, 255)                 # xterm's 256-colour cube (16-231)
+        cube = lambda n: (steps[(n - 16) // 36], steps[(n - 16) // 6 % 6], steps[(n - 16) % 6])
         for pal, bg in ((dark, (0x26, 0x21, 0x2f)), (light, (0xe2, 0xe1, 0xe6))):
             for sgr in set(self.tb.CAT_COLOUR.values()) - {""}:
-                n = int(sgr[3])
-                self.assertGreaterEqual(self.tb._contrast(h(pal[n]), bg), 3.0, (n, pal[n]))
+                if sgr.startswith("\x1b[38;5;"):
+                    n = int(sgr[7:-1])
+                    rgb = cube(n)
+                else:
+                    n = int(sgr[3])
+                    rgb = h(pal[n])
+                self.assertGreaterEqual(self.tb._contrast(rgb, bg), 3.0, (n, rgb))
 
 
 class ConfigFolder(TabBarCase):
@@ -759,6 +786,298 @@ class Cat(TabBarCase):
     def test_kitty_cat_off_hides_it(self):
         open(self.kitty_path("cat-off"), "w").close()
         self.assertEqual(self.tb._cat_face(), "")
+
+
+class CatMoves(TabBarCase):
+    """The cat moves: short moves (frames of 0.125 s) on top of the mood's face,
+    reactions to what happens, and a roll of the dice once a second. A pinned clock and dice."""
+
+    def setUp(self):
+        super().setUp()
+        self.clock = [1000.0]
+        self.time = mock.patch.object(self.tb.time, "monotonic", lambda: self.clock[0])
+        self.time.start()
+        self.tb._cat.update(quiet_since=1000.0, done_at=-99.0, error_at=-99.0, blocked=0, working=False,
+                            fresh_block=False)
+        self.tb._frame = 100
+
+    def tearDown(self):
+        self.time.stop()
+        super().tearDown()
+
+    def play(self, name):
+        """The faces, frame by frame, of `name` started now, and one frame after it ends."""
+        tb = self.tb
+        tb._cat["moves"] = {name: tb._frame}
+        out = []
+        for _ in range(tb._move_len(name) + 1):
+            out.append(tb._visible(tb._cat_face()))
+            tb._frame += 1
+        return out
+
+    def test_each_moves_frames(self):
+        tb, now = self.tb, self.clock[0]
+        I = "=^.^="
+        for name, want in {
+            "blink": ["=-.-=", I],                                  # 0.125 s
+            "wink": ["=^ω-="] * 5 + [I],                            # 0.625 s, with a smile
+            "look-left": ["=<.<="] * 8 + [I],                       # 1 s
+            "look-right": ["=>.>="] * 8 + [I],
+            "ear-left": ["~^.^="] * 2 + [I] * 2 + ["~^.^="] * 2 + [I] * 3,   # twitches twice
+            "ear-right": ["=^.^~"] * 2 + [I] * 2 + ["=^.^~"] * 2 + [I] * 3,
+            "tail": ["=^.^= ~"] * 2 + ["=^.^= -"] * 2 + ["=^.^= ~"] * 2 + ["=^.^= -"] * 2 + [I],
+        }.items():
+            self.assertEqual(self.play(name), want, name)
+        tb._cat["blocked"] = 1                                      # a tab needs you
+        self.assertEqual(self.play("surprise"), ["~OoO~ !"] * 2 + ["=OoO= !"] * 2 + ["=O.O= !"])
+        tb._cat.update(blocked=0, error_at=now)
+        self.assertEqual(self.play("flinch"), ["~>.<~ "] * 2 + ["=>.<= "] * 2 + ["~>.<~ "] * 2 + ["=>.<= "])
+        tb._cat.update(error_at=-99.0, done_at=now)
+        self.assertEqual(self.play("hop"), ["=>ω<= ♪"] * 4 + ["=^ω^= ♪"])
+        up, down = "=^ω^/ ♪", "=^ω^= ♪"
+        self.assertEqual(self.play("wave"), [up] * 2 + [down] * 2 + [up] * 2 + [down] * 2 + [up, down])
+        tb._cat["done_at"] = -99.0
+        tb._badge_shown.update(id="zoom", until=now + 5, rank=False)
+        faces = [f[:5] for f in self.play("cheer")]                 # (the twinkle after it twinkles)
+        up, down = "\\^▽^/", "=^▽^="
+        self.assertEqual(faces, [up] * 2 + [down] * 2 + [up] * 2 + [down] * 2 + [up, down])
+
+    def test_moves_overlap(self):
+        tb = self.tb
+        tb._cat["moves"] = {"tail": tb._frame, "blink": tb._frame + 2}    # a blink mid tail flick
+        faces = []
+        for _ in range(4):
+            faces.append(tb._visible(tb._cat_face()))
+            tb._frame += 1
+        self.assertEqual(faces, ["=^.^= ~", "=^.^= ~", "=-.-= -", "=^.^= -"])
+        tb._cat["moves"] = {"look-left": tb._frame - 3, "blink": tb._frame}
+        self.assertEqual(tb._visible(tb._cat_face()), "=-.-=")        # a blink closes a glance too
+
+    def test_a_move_shows_only_in_its_moods(self):
+        tb, now = self.tb, self.clock[0]
+        tb._cat.update(blocked=1, done_at=now)                       # finished, but another one waits
+        tb._cat["moves"] = {"hop": tb._frame, "tail": tb._frame}
+        self.assertEqual(tb._visible(tb._cat_face()), "=O.O= !")      # needs you wins, and stays still
+        tb._cat.update(blocked=0, working=True)
+        self.assertEqual(tb._visible(tb._cat_face()), "=>ω<= ♪")      # happy beats working
+        tb._cat.update(done_at=-99.0)
+        self.assertEqual(tb._visible(tb._cat_face()), "=^.^= -")      # working: its own tail swishes
+        tb._cat.update(working=False, quiet_since=now - tb.SLEEP_AFTER - 61)
+        tb._cat["moves"] = {"blink": tb._frame, "look-left": tb._frame}
+        self.assertEqual(tb._visible(tb._cat_face()), "=-.-= zZ")     # asleep: nothing moves
+
+    def test_the_face_stays_five_cells_in_one_place(self):
+        tb, now = self.tb, self.clock[0]
+        moods = {
+            "idle": {}, "working": dict(working=True), "alert": dict(blocked=2),
+            "happy": dict(done_at=now), "startled": dict(error_at=now),
+            "asleep": dict(quiet_since=now - tb.SLEEP_AFTER - 1),
+        }
+        tb._streak.update(step=3, at=now)                            # ♪♪♪: the widest notes
+        faces = set()
+        for mood, state in list(moods.items()) + [("badge", None)]:
+            tb._cat.update(blocked=0, working=False, done_at=-99.0, error_at=-99.0, quiet_since=now)
+            tb._badge_shown.update(until=0.0)
+            if state is None:
+                tb._badge_shown.update(id="zoom", until=now + 5, rank=True)
+            else:
+                tb._cat.update(state)
+            for name in tb.CAT_MOVES:
+                tb._cat["moves"] = {name: tb._frame}
+                for _ in range(tb._move_len(name) + 1):
+                    faces.add(tb._cat_face())
+                    tb._frame += 1
+        self.assertGreater(len(faces), 35)
+        for face in faces:
+            seen = tb._visible(face)
+            self.assertEqual(tb._cells(seen[:5]), 5, seen)
+            self.assertLessEqual(tb._cells(seen), tb.CAT_WIDTH, seen)
+            for ch in seen[:5]:                                        # single-width, never ambiguous
+                self.assertTrue(ch.isascii() or ch in "ω▽", seen)       # (but the faces' own ω ▽)
+        for width in range(14, 41):
+            starts = set()
+            for face in faces:
+                with mock.patch.object(tb, "_cat_face", lambda: face):
+                    line = tb._visible(tb._new_tab_label(width)).split("\n")[0]
+                if line.endswith(tb._visible(face)):
+                    starts.add(tb._cells(line[:len(line) - len(tb._visible(face))]))
+            if width >= 20:                                            # the cat fits: one place
+                self.assertEqual(len(starts), 1, (width, starts))
+            self.assertLessEqual(len(starts), 1, (width, starts))
+
+    def test_night_puts_the_idle_cat_to_sleep(self):
+        tb, now = self.tb, self.clock[0]
+        tb._night = self.real_night
+
+        def at(hour):
+            return mock.patch.object(tb.time, "localtime",
+                                     lambda *a: time.struct_time((2026, 11, 25, hour, 30, 0, 2, 329, 0)))
+        for hour in (23, 0, 3, 5):
+            with at(hour):
+                self.assertEqual(tb._cat_mood()[0], "asleep", hour)        # dozes off at once
+                self.clock[0] = now + 61
+                self.assertEqual(tb._cat_mood(), ("asleep", "=-.-= zZ"))   # then holds still
+                self.clock[0] = now
+        for hour in (6, 12, 22):
+            with at(hour):
+                self.assertEqual(tb._cat_mood(), ("idle", "=^.^="), hour)
+        with at(2):                                                    # more important things wake it
+            for state, mood in ((dict(working=True), "working"), (dict(blocked=1), "alert"),
+                                (dict(done_at=now), "happy"), (dict(error_at=now), "startled")):
+                tb._cat.update(state)
+                self.assertEqual(tb._cat_mood()[0], mood)
+                tb._cat.update(working=False, blocked=0, done_at=-99.0, error_at=-99.0)
+            tb._badge_shown.update(id="zoom", until=now + 5)
+            self.assertEqual(tb._cat_mood()[0], "badge")
+
+    def test_the_dice(self):
+        tb = self.tb
+        tb._cat_rng = Dice(0.1)                                      # under CAT_BLINK: a blink
+        tb._cat_react()
+        self.assertEqual(list(tb._cat["moves"]), ["blink"])
+        for pick, want in enumerate(tb.CAT_FIDGETS):                 # just over: a fidget
+            tb._cat.update(moves={}, roll=0)
+            tb._cat_rng = Dice(tb.CAT_BLINK + 0.01, pick=pick)
+            tb._cat_react()
+            self.assertEqual(list(tb._cat["moves"]), [want])
+        tb._cat.update(moves={}, roll=0)
+        tb._cat_rng = Dice(0.5)                                      # most seconds: nothing
+        tb._cat_react()
+        self.assertEqual(tb._cat["moves"], {})
+        tb._cat.update(moves={"look-left": tb._frame}, roll=0)        # no fidget over another move
+        tb._cat_rng = Dice(tb.CAT_BLINK + 0.01, pick=0)
+        tb._cat_react()
+        self.assertEqual(list(tb._cat["moves"]), ["look-left"])
+        tb._cat.update(moves={}, roll=0, working=True)               # working: no idle tail flick
+        tb._cat_rng = Dice(tb.CAT_BLINK + 0.01, pick=5)
+        tb._cat_react()
+        self.assertNotIn("tail", tb._cat["moves"])
+
+    def test_rolls_once_a_second_and_never_waiting_asleep_or_hidden(self):
+        tb = self.tb
+        rolls = []
+
+        class Counting(Dice):
+            def random(self):
+                rolls.append(tb._frame)
+                return 0.99
+        tb._cat_rng = Counting()
+        for _ in range(80):
+            tb._cat_react()
+            tb._frame += 1
+        self.assertEqual(len(rolls), 10)
+        self.assertEqual({b - a for a, b in zip(rolls, rolls[1:])}, {tb.CAT_ROLL})
+        rolls.clear()
+        tb._cat["blocked"] = 1                                          # a tab waits: the cat stares
+        for _ in range(80):
+            tb._cat_react()
+            tb._frame += 1
+        tb._cat["blocked"] = 0
+        tb._cat["quiet_since"] = self.clock[0] - tb.SLEEP_AFTER - 1       # asleep
+        for _ in range(80):
+            tb._cat_react()
+            tb._frame += 1
+        tb._cat["quiet_since"] = self.clock[0]
+        open(self.kitty_path("cat-off"), "w").close()                    # hidden
+        for _ in range(80):
+            tb._cat_react()
+            tb._frame += 1
+        self.assertEqual(rolls, [])
+
+    def test_a_seeded_cat_does_the_same_again(self):
+        tb = self.tb
+
+        def run(seed):
+            tb._frame = 100
+            tb._cat.update(moves={}, roll=0)
+            tb._cat_rng = random.Random(seed)
+            started = []
+            for _ in range(8 * 600):                                  # ten minutes
+                before = dict(tb._cat["moves"])
+                tb._cat_react()
+                started += [(tb._frame, n) for n, f in tb._cat["moves"].items() if before.get(n) != f]
+                tb._frame += 1
+            return started
+        a = run(42)
+        self.assertEqual(a, run(42))
+        blinks = sum(1 for _, n in a if n == "blink")
+        self.assertTrue(90 < blinks < 175, blinks)                    # about 22% of 600 rolls
+        self.assertTrue(any(n != "blink" for _, n in a))
+
+    def test_reacts_to_what_happens(self):
+        tb, now = self.tb, self.clock[0]
+        tb._cat["blocked"] = 1
+        tb._cat_react()                                               # the first look: nothing new
+        self.assertEqual(tb._cat["moves"], {})
+        tb._cat["blocked"] = 2                                        # another tab needs you
+        tb._cat_react()
+        self.assertEqual(tb._cat["moves"], {"surprise": tb._frame})
+        tb._cat.update(blocked=0, moves={}, done_at=now)              # one finished: hop, then wave
+        tb._cat_react()
+        self.assertEqual(tb._cat["moves"], {"hop": tb._frame, "wave": tb._frame + tb._move_len("hop")})
+        tb._cat.update(moves={}, error_at=now)
+        tb._cat_react()
+        self.assertEqual(tb._cat["moves"], {"flinch": tb._frame})
+        tb._cat["moves"] = {}
+        tb._badge_shown.update(id="zoom", until=now + 5)
+        tb._cat_react()
+        self.assertEqual(tb._cat["moves"], {"cheer": tb._frame})
+        tb._frame += 20
+        tb._cat_react()
+        self.assertEqual(tb._cat["moves"], {})                       # done ones are dropped
+
+    def test_redraws_only_while_a_move_plays(self):
+        tb = self.tb
+
+        class Drawing(FakeTabManager):
+            def mark_tab_bar_dirty(self):
+                super().mark_tab_bar_dirty()
+                tb._new_tab_label(30)                                 # what kitty's redraw does
+        tm = Drawing([FakeTab()])
+        self.boss.all_tab_managers = [tm]
+        tb._tick()                                                    # the first tick draws once
+        tb._tick()
+        start = tm.dirty
+        for _ in range(8 * 60):                                       # a quiet minute, no moves
+            tb._tick()
+        self.assertEqual(tm.dirty, start)
+        tb._cat["roll"] = 0
+        tb._cat_rng = Dice(0.1)                                       # one blink: on, then off
+        for _ in range(16):
+            tb._tick()
+        self.assertEqual(tm.dirty, start + 2)
+        tb._cat.update(roll=0, moves={})
+        tb._cat_rng = Dice(tb.CAT_BLINK + 0.01, pick=5)               # a tail flick: ~ - ~ - gone
+        for _ in range(16):
+            tb._tick()
+        self.assertEqual(tm.dirty, start + 2 + 5)
+        tb._cat["quiet_since"] = self.clock[0] - tb.SLEEP_AFTER - 61   # fully asleep
+        tb._tick()
+        asleep = tm.dirty
+        tb._cat_rng = Dice(*[0.1] * 100)                              # dice that would always blink
+        for _ in range(8 * 60):
+            tb._tick()
+        self.assertEqual(tm.dirty, asleep)
+        tb._cat.update(quiet_since=self.clock[0], blocked=0)
+
+    def test_a_waiting_tab_holds_the_cat_still(self):
+        tb = self.tb
+
+        class Drawing(FakeTabManager):
+            def mark_tab_bar_dirty(self):
+                super().mark_tab_bar_dirty()
+                tb._new_tab_label(30)
+        waiting = FakeTab(FakeWindow("blocked"))
+        tm = Drawing([waiting])
+        self.boss.all_tab_managers = [tm]
+        tb._tick()                                                    # (loaded with it waiting)
+        tb._tick()
+        self.assertEqual(tb._visible(tb._cat_face()), "=O.O= !")
+        start = tm.dirty
+        tb._cat_rng = Dice(*[0.1] * 100)                              # dice that would always blink
+        for _ in range(8 * 60):
+            tb._tick()
+        self.assertEqual(tm.dirty, start)
 
 
 class Sounds(TabBarCase):
@@ -1204,6 +1523,88 @@ class Draw(TabBarCase):
     def strip(s):
         import re
         return re.sub(r"<[^>]*>|\x1b\[[0-9;]*m", "", s)
+
+
+class CommandTitles(TabBarCase):
+    """A running command's title is its command line (kitty's shell integration): the row shows its
+    program and subcommand (config/command_title.py; the rule's own tests: test_command_title.py)."""
+    MARK = "zq7PRIVzq"          # stands in for a password or token
+
+    def tab_running(self, title, cmdline=None, **attrs):
+        w = FakeWindow()
+        w.title, w.last_cmd_cmdline, w.at_prompt, w.override_title = title, (
+            title if cmdline is None else cmdline), False, None
+        for k, v in attrs.items():
+            setattr(w, k, v)
+        t = FakeTab(w)
+        t.name = ""
+        return t
+
+    data, strip = Draw.data, staticmethod(Draw.strip)
+
+    def name(self, tab, title=None):
+        out = self.tb.draw_title(self.data(tab, 1, title if title is not None else tab.windows[0].title, "/w/proj"))
+        return self.strip(out.split("\n")[0])[6:].strip().removesuffix("×").strip()   # the active tab's ×
+
+    def test_a_command_shows_its_program_and_subcommand(self):
+        a = self.tab_running("git push https://me:" + self.MARK + "@git.test/x main")
+        b = self.tab_running("API_KEY=" + self.MARK + " npm run build")
+        c = self.tab_running("API_KEY=" + self.MARK)                          # nothing to name: the folder
+        self.window(a, b, c)
+        self.assertEqual(self.name(a), "git push")
+        self.assertEqual(self.name(b), "npm run build")
+        self.assertEqual(self.name(c), "proj")
+
+    def test_titles_set_by_agents_and_people_stay(self):
+        a = self.tab_running("✳ Fix the login bug", "claude")
+        b = self.tab_running("make deploy " + self.MARK)
+        b.name = "make deploy " + self.MARK                                    # you named it (Ctrl+Shift+R)
+        c = self.tab_running("notes " + self.MARK, "make", override_title="notes " + self.MARK)
+        self.window(a, b, c)
+        self.assertEqual(self.name(a), "Fix the login bug")
+        self.assertIn(self.MARK, self.name(b, b.name))
+        self.assertIn(self.MARK, self.name(c))
+
+    def test_the_moment_before_bash_reports_the_command(self):
+        a = self.tab_running("API_KEY=" + self.MARK + " read -t 30 v", "ls", at_prompt=True)
+        self.window(a)
+        self.assertEqual(self.name(a), "read")
+
+    def test_under_an_overlay_the_covered_window_decides(self):
+        base = self.tab_running("mysql -p" + self.MARK).windows[0]
+        sheet = FakeWindow()
+        sheet.title, sheet.override_title, sheet.last_cmd_cmdline = base.title, base.title, ""
+        t = FakeTab(base, sheet)
+        t.name, t.active_window, t.active_window_for_cwd = "", sheet, base
+        self.window(t)
+        self.assertEqual(self.name(t, sheet.title), "mysql")
+
+    def test_the_switch_and_the_timer(self):
+        a = self.tab_running("make deploy KEY=" + self.MARK)
+        tm = self.window(a)
+        self.tb._tick()
+        before = tm.dirty
+        open(self.kitty_path("full-commands"), "w").close()                  # kitty-commands full
+        self.tb._tick()
+        self.assertGreater(tm.dirty, before)                                  # redrawn at once
+        self.assertTrue(self.name(a).startswith("make deploy KEY=zq"), self.name(a))   # (cut to fit)
+        os.remove(self.kitty_path("full-commands"))
+        self.tb._tick()
+        self.assertEqual(self.name(a), "make deploy")
+
+    def test_the_fallback_row_never_shows_the_command_line(self):
+        a = self.tab_running("make deploy KEY=" + self.MARK)
+        self.window(a)
+        with mock.patch.object(self.tb, "_draw_title", side_effect=RuntimeError):
+            out = self.tb.draw_title(self.data(a, 1, a.windows[0].title, "/w/proj"))
+        self.assertNotIn(self.MARK, out)
+        self.assertIn("make deploy", out)
+
+    def test_a_reported_command_needs_no_process_lookup(self):
+        a = self.tab_running("make test")
+        self.window(a)
+        with mock.patch.object(self.tb, "_foreground_name", side_effect=AssertionError("looked up")):
+            self.assertEqual(self.name(a), "make test")
 
 
 class MacOS(TabBarCase):

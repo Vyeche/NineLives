@@ -6,8 +6,8 @@
     settings.py list      print every setting and its value
 
 Each change is made at once, in the same files the kitty-* shell commands use (in kitty's config
-folder: sounds-off, sounds-volume, sounds-classic, cat-off, quests-off, buttons-off, tips-off), so
-the sidebar, the shell commands and this list always agree.
+folder: sounds-off, sounds-volume, sounds-classic, cat-off, quests-off, buttons-off, full-commands,
+tips-off), so the sidebar, the shell commands and this list always agree.
 """
 import hashlib
 import json
@@ -40,6 +40,10 @@ TOGGLES = {
                "Shortcut quests and badges; the next one shows under + New tab. Badges are kept. (kitty-quests)"),
     "buttons": ("Sidebar buttons", "buttons-off", ("shown", "hidden"),
                 "The search field and buttons on top of the sidebar, and × on the current tab. (kitty-buttons)"),
+    # the other way round: off (short names) while the file is missing
+    "commands": ("Full commands in tab names", "full-commands", ("off", "on"),
+                 "Off: a running command's tab shows its program and subcommand (git push), never its "
+                 "arguments, which can hold a password. On: the whole line. (kitty-commands)"),
     "tips": ("Prompt tips", "tips-off", ("on", "off"),
              "A tip or your next quest under each new shell prompt. (kitty-tips)"),
 }
@@ -50,9 +54,9 @@ DESCRIPTIONS.update(
     volume="How loud the tab sounds are, 5–100 %. You hear the new level. (kitty-sounds volume N)",
     edit="Opens kitty.conf in your editor; Ctrl+Shift+F5 reloads it after you save.")
 # the rows in order; None is a blank line
-ROWS = ("sounds", "volume", "soundset", "cat", "quests", "buttons", "tips", None, "edit")
+ROWS = ("sounds", "volume", "soundset", "cat", "quests", "buttons", "commands", "tips", None, "edit")
 OFF_VALUES = {"off", "hidden"}
-SHORT_LABELS = {"edit": "Edit kitty.conf…", "buttons": "Buttons"}   # for a narrow window
+SHORT_LABELS = {"edit": "Edit kitty.conf…", "buttons": "Buttons", "commands": "Full commands"}   # for a narrow window
 FOOTERS = ("↑↓ move · ←→ Enter change · Esc close", "↑↓ · Enter change · Esc close", "Enter change · Esc close")
 ROW_MAX = 64                 # rows are at most this wide, so a label and its value stay close
 

@@ -88,7 +88,7 @@ if [ "$DRY" = 1 ]; then
 fi
 echo "$removed file(s) removed, $restored put back from a backup, $kept kept."
 echo "Left alone (delete them if you like):"
-echo "  switches in $DEST (sounds-off, sounds-volume, sounds-classic, cat-off, quests-off, tips-off, buttons-off)"
+echo "  switches in $DEST (sounds-off, sounds-volume, sounds-classic, cat-off, quests-off, tips-off, buttons-off, full-commands)"
 echo "  quest progress: ${NINELIVES_STATE:-$HOME/.local/state/ninelives}"
 echo "  restart log and session: ${XDG_CACHE_HOME:-$HOME/.cache}/ninelives"
 echo "  the tips.sh line in ~/.bashrc or ~/.zshrc (harmless once tips.sh is gone)"

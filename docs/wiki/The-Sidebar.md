@@ -9,11 +9,47 @@ Each tab has one strong signal: its status icon (and its name). Everything else 
 number, the agent mark, the folder, the branch and the time are in the tab's own muted colour, the
 number and the mark a shade quieter still (kept just above 4.5:1 for text and 3:1 for marks in both
 themes), so a ⚠ or a ✓ stands out at a glance.
-- **Name:** the tab's title (Claude's task, omp's title), or the folder name for a plain shell (also one whose title is just `bash`, as for a shell without kitty's shell integration, unless you named the tab that). Claude's `✳` prefix is dropped: the status slot already says that. Rename with **Ctrl+Shift+R**.
+- **Name:** the tab's title (Claude's task, omp's title), or the folder name for a plain shell (also one whose title is just `bash`, as for a shell without kitty's shell integration, unless you named the tab that). Claude's `✳` prefix is dropped: the status slot already says that. Rename with **Ctrl+Shift+R**. A running command's tab shows only its program and subcommand (`git push`, not `git push origin main`): see [below](#commands-in-tab-names).
 - **Number:** what **Alt+1…9** goes to (and what the search box finds by number), in a quiet grey.
 - **Agent:** under the status icon, a small quiet mark says which agent runs in the tab: `✳` Claude, `π` omp, two letters for others (`oc` opencode, `cx` codex, `gm` gemini, `ai` aider). A plain shell has none.
 - **Folder:** the last two folders, with `~` for home; cut at the start with `…` if long. In a git repo on a branch other than `main`/`master`, the branch follows in the folder's colour: `code/api ⌥ fix-parser` (a branch only fits whole or with at least a few letters; otherwise it is left out).
 - **Time** (`3m`, `1h05`): how long the tab has been working, waiting or finished. It appears after one minute, and counts from when the sidebar first saw that state, so it starts again after a kitty restart.
+
+## Commands in tab names
+While a command runs, kitty's shell integration names the tab after the whole command line, and a
+command line can hold a password or a token (`mysql -p…`, `curl -H "Authorization: …"`,
+`export TOKEN=…`). So the sidebar, the search box (Ctrl+Shift+Space) and `kitty-relaunch.sh --status`
+show only the program and its subcommand:
+
+| Command line | Tab name |
+| --- | --- |
+| `git push origin main` | `git push` |
+| `cd app && npm run build -- --token=…` | `npm run build` (a chain: its last command) |
+| `cat log \| grep error` | `cat` (a pipe: its first command) |
+| `API_KEY=… docker compose up -d` | `docker compose up` (`VAR=value` is never shown) |
+| `sudo -u db psql -c "…"` | `psql` (sudo, env, time, timeout, … are skipped) |
+| `python3 -m pytest -k …` / `python3 scripts/check.py …` | `python3 -m pytest` / `python3 check.py` |
+| `node -e "…"`, `bash -c "…"` | `node`, `bash` (code is never shown) |
+| `mysql -u root -p…`, `ssh me@host`, `echo …` | `mysql`, `ssh`, `echo` |
+
+The word after the program is shown only for programs that have subcommands (git, npm, docker, make,
+cargo, kubectl, …) and only if it looks like one (lowercase letters, digits, `-`, `_`); after `run` and
+`compose` one more. Searching finds tabs by that short name, never by an argument.
+
+Names programs set themselves stay as they are (Claude's `✳ Fix the login bug`, omp's spinner and task),
+so do names you give a tab (Ctrl+Shift+R) or a window, and an idle shell's folder. NineLives tells them
+apart by comparing the title with the command line the shell reported to kitty when the command
+started (`config/command_title.py` has the details). The search box and the sidebar use the same rule.
+
+To see whole command lines again: `kitty-commands full`, or **Full commands in tab names** in the
+settings list (Ctrl+Shift+F2); `kitty-commands short` goes back. It applies at once.
+
+The limits: NineLives doesn't change kitty's own titles or messages. kitty's OS-window title (the
+taskbar, Alt+Tab, the window's title bar) still shows the whole command line of the active tab while
+it runs, and so does kitty's desktop notification when a command of 15 s or more finishes in a tab
+you aren't looking at (`notify_on_cmd_finish` in `kitty.conf`). A secret typed as the command itself
+(pasted at the prompt by mistake) is the program's name and shows. A remote shell that sets the title
+to the command without reporting it to kitty (no kitty shell integration there) shows it whole.
 
 ## Search field and buttons
 The top of the sidebar has a search field and a few buttons, like Warp's:
@@ -81,7 +117,8 @@ for you, tabs with an error, then the tabs nearest yours. The last line names th
 **Alt+N** still goes to tab N.
 Which tabs are shown is written to `~/.local/state/ninelives/sidebar.txt` whenever it changes, with
 their agent marks (`agents: 3:π 12:✳`), which kitty wrote it (`kitty:` and its process id), the current tab's folder line as kitty drew it (`drawn folder:
-✳ code/api ⌥ fix-parser`), where the buttons are and the columns kitty really drew `⚠`, `⚙`, `+` and `×`
+✳ code/api ⌥ fix-parser`) and its name line (`drawn name:`, left out while `kitty-commands full` is on, so a
+whole command line is never written down), where the buttons are and the columns kitty really drew `⚠`, `⚙`, `+` and `×`
 in (`check.sh` compares them).
 
 ## Celebrations

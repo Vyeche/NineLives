@@ -30,7 +30,9 @@ session: splits come back in the same layout and sizes (kitty's layout_state, as
   pane without a session id then gets a hint, not `claude --continue`, which would pick home's).
 snapshot: the same for each tab's active pane (command empty for a shell); name is the tab's own
   name if you renamed it, else empty; active is 1 for the tab you were on.
-busy: tabs a restart would interrupt (see kitty-relaunch.sh --status).
+busy: tabs a restart would interrupt (see kitty-relaunch.sh --status), each with its title; a command
+  line a shell set as the title is cut to its program and subcommand, as in the sidebar
+  (config/command_title.py), so the log never holds its arguments.
 kitty-pid: a window's pid can be a process kitty started under a wrapper (launch --hold runs the
   command under kitten), so its parents are followed up to kitty itself (from /proc; on macOS,
   which has none, from one `ps` listing).
@@ -472,6 +474,32 @@ def kitty_pid(tabs, stat=_proc_stat):
     return None
 
 
+def _load_command_title():
+    """config/command_title.py (the sidebar's rule for command-line titles), or None."""
+    try:
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "command_title.py")
+        spec = importlib.util.spec_from_file_location("ninelives_command_title", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+def _busy_title(w):
+    """A window's title for --status and the log: a command line its shell set is cut to its
+    program and subcommand, as in the sidebar (always: the log is a file)."""
+    title = w.get("title", "") or ""
+    if w.get("title_overridden"):
+        return title
+    ct = _load_command_title()
+    if ct is None:
+        return os.path.basename(title.split()[0]) if title.split() and title == w.get("last_reported_cmdline") else title
+    names = [_name((p.get("cmdline") or [""])[0]) for p in w.get("foreground_processes") or []]
+    return ct.shown_title(title, w.get("last_reported_cmdline") or "", bool(w.get("at_prompt")), names)
+
+
 def busy(tabs):
     out = []
     for i, tab in enumerate(tabs, 1):
@@ -481,7 +509,7 @@ def busy(tabs):
                    else "spinner" if SPINNER_RE.search(w.get("title", "")[:6])
                    else "command" if _command(w) else "")
             if why:
-                out.append(f"{i:>3}  {why:<9}  {w.get('title', '')[:50]}")
+                out.append(f"{i:>3}  {why:<9}  {_busy_title(w)[:50]}")
                 break
     return out
 
