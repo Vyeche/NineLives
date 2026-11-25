@@ -90,6 +90,68 @@ SHORT = [
     ("sleep 30 --" + MARK, "sleep"),
     ("API_KEY=x read -t 30 v", "read"),
     ("git commit -m \"open quote " + MARK, "git"),          # can't be parsed: the program only
+    # watch -d / --differences take no separate value: the program after them is named
+    ("watch -d curl -H 'X-Key: " + MARK + "' localhost", "curl"),
+    ("watch --differences curl " + MARK, "curl"),
+    ("watch -d=permanent kubectl get pods", "kubectl get"),
+    # quoted or escaped ; & | ( ) are text, not operators
+    ("printf '%s' ';' " + MARK, "printf"),
+    ("printf '%s' '&&' " + MARK, "printf"),
+    ("printf '%s' '||' " + MARK, "printf"),
+    ("printf '%s' '|' " + MARK, "printf"),
+    ("echo \\; " + MARK, "echo"),
+    ("echo \"a;b\" " + MARK, "echo"),
+    ("echo \"\\\";\" " + MARK, "echo"),
+    ("echo ')' " + MARK, "echo"),
+    ("echo '(' " + MARK, "echo"),
+    ("a && b; c || d", "d"),                                # real operators still split
+    ("echo $(cat " + MARK + ");make", "make"),
+    # a word that isn't a program's name is never shown: the wrapper or nothing
+    ("watch 'curl -H K:" + MARK + " localhost'", "curl"),   # watch's one string: read by the same rules
+    ("watch 'kubectl get pods'", "kubectl get"),
+    ("watch \"curl https://x.test/" + MARK + "\"", "curl"),
+    ("timeout 5 'curl " + MARK + "'", "timeout"),
+    ("sudo 'curl " + MARK + "'", "sudo"),
+    ("flock /tmp/l -c 'curl " + MARK + "'", "flock"),
+    ("'" + MARK + " x' --y", ""),
+    ("$" + MARK, ""),
+    ("bash '/tmp/x y/" + MARK + ".sh'", "bash"),
+    ("g++ -o x x.cc", "g++"),
+    ("python3.12 x.py", "python3.12 x.py"),
+    ("./run.sh --key " + MARK, "run.sh"),
+    # an open quote: only the complete words before it count, and only the first line
+    ("TOKEN='" + MARK + "\nmore' curl localhost", ""),
+    ("KEY=\"a " + MARK, ""),
+    ("X=1 sudo \"" + MARK, "sudo"),
+    ("(cd sub && make " + MARK, "make"),                    # an unclosed bracket
+    ("KEYS=(" + MARK + " other", ""),                      # an array left open is a value
+    ("KEYS=(" + MARK + "\nother)", ""),
+    ("arr+=(" + MARK, ""),
+    ("X=$(" + MARK, ""),
+    ("a && (cd x && make " + MARK, "make"),
+    # bash's $'…' (\' inside) and comments
+    ("echo $'it\\'s; " + MARK + " isn\\'t'", "echo"),
+    ("echo $'open " + MARK, "echo"),
+    ("make # note; " + MARK + " x", "make"),
+    ("echo a#b; make", "make"),
+    # wrappers after watch are passed over too
+    ("watch -n 1 sudo kubectl get pods", "kubectl get"),
+    ("watch env K=" + MARK + " curl x", "curl"),
+    ("watch sudo 'kubectl get pods'", "kubectl get"),
+    # programs whose next word is free-form: the program alone
+    ("pytest " + MARK, "pytest"),
+    ("code " + MARK, "code"),
+    ("cmake " + MARK, "cmake"),
+    ("journalctl " + MARK, "journalctl"),
+    ("yay " + MARK, "yay"),
+    ("docker run " + MARK, "docker run"),                   # an image name: not shown
+    ("kubectl run " + MARK, "kubectl run"),
+    ("ollama run " + MARK, "ollama run"),
+    ("go run " + MARK, "go run"),
+    ("python3 -m pytest " + MARK, "python3 -m pytest"),
+    ("pnpm run test", "pnpm run test"),
+    ("gcloud run deploy", "gcloud run deploy"),
+    ("podman compose up", "podman compose up"),
 ]
 
 

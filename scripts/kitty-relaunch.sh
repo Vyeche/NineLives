@@ -95,9 +95,12 @@ kls() { "$NEW" @ --to "$SOCK" ls 2>/dev/null; }
 kls >/dev/null || { echo "$(date +%T) the kitty at $SOCK doesn't answer (closed?)"; exit 1; }
 busy() { kls | python3 "$TABS_PY" busy; }           # one line per busy tab; nothing when all idle
 SESSION="$(dirname "$LOG")/kitty-relaunch.kitty-session"   # what the new kitty opens
-SAVED="$(dirname "$LOG")/kitty-relaunch-saved.kitty-session"   # kitty's own save, for zoomed splits
+# kitty's own save, for zoomed splits; each run has its own (a --dry-run beside a restart can't delete
+# the restart's), named by this shell's PID
+SAVED="$(dirname "$LOG")/kitty-relaunch-saved-$$.kitty-session"
 # (kitty writes the command running in each window into that save, arguments and all: it is removed
-# as soon as its layouts are read)
+# as soon as its layouts are read, and when this run ends whichever way)
+trap 'rm -f "$SAVED"' EXIT
 
 # The detached copy of this script knows itself by a one-time token (in the environment and in a
 # file it deletes at once). A plain _KR_DETACHED=1 leaked into the new kitty and every tab in it, so

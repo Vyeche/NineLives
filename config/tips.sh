@@ -38,7 +38,7 @@ _kitty_tips=(
   "The cat next to + New tab sums up every tab: =O.O= ! means one needs you (kitty-cat explains)"
   "Sounds too loud? kitty-sounds volume 40 turns the tab sounds down (5-100)"
   "A tab you're looking at doesn't chime when it finishes: you can already see it"
-  "A running command's tab shows just its program (git push), never its arguments; kitty-commands full shows it all"
+  "A running command's tab shows just its program (git push), not its arguments; kitty-commands full shows it all"
 )
 _nl_state="${NINELIVES_STATE:-$HOME/.local/state/ninelives}"
 # macOS (new, not yet tried on a real Mac): afplay plays the .wav copies install.sh makes
@@ -144,6 +144,7 @@ kitty-commands() {
            "  cd app && npm run build -- --token=…   →   npm run build" \
            "  git push origin main                  →   git push" \
            "  sudo -u db psql -c \"…\"                →   psql" \
+           "  python3 scripts/check.py --key …      →   python3 check.py (a script's name shows)" \
            "Names that agents set (✳ Fix the login bug) and names you give a tab (Ctrl+Shift+R) stay." \
            "Now: $([ -e "$_nl_conf"/full-commands ] && echo "whole command lines" || echo "program and subcommand")." \
            "kitty-commands full shows whole command lines, kitty-commands short goes back." \

@@ -28,16 +28,23 @@ The short form (short_command), from the command line:
   - only the first line counts (what follows is a here-document's text or pasted lines); in it
     a chain (`cd x && make test`, `a; b`, `a || b`) names its last command, a pipe
     (`cat f | grep x`) its first; ( ) and $( ) are looked into or left out; `if`/`do`/`then` and
-    `done`/`fi` are skipped
+    `done`/`fi` are skipped. Quoted or backslash-escaped ; & | < > ( ) are text, never operators;
+    a # that starts a word starts a comment.
   - VAR=value assignments in front are dropped (never shown); so are sudo, env, time, nohup,
-    nice, timeout, watch, … with their options: the program after them is the one named
-  - the program's name (its basename), and only for programs that have subcommands (SUBCOMMANDS:
-    git, npm, docker, make, …) the next word, if it looks like one: lowercase letters, digits,
-    - and _, starting with a letter. After `run` and `compose` one more such word (npm run build,
-    docker compose up)
+    nice, timeout, watch, … with their options: the program after them is the one named. watch's
+    command given as one quoted string (`watch 'kubectl get pods'`) is read by the same rules.
+  - the program's name (its basename), only if it looks like one (letters, digits, . _ + @ -, a
+    path in front): a quoted string with spaces, a $VAR or a VAR=value in that place shows the
+    wrapper before it or nothing. Only for programs whose next word is a subcommand, a target or a
+    script name (SUBCOMMANDS: git, npm, docker, make, …) the next word, if it looks like one:
+    lowercase letters, digits, - and _, starting with a letter. After `run` (npm, uv, poetry, …)
+    and `compose` (docker, podman) one more such word (npm run build, docker compose up)
   - interpreters (python3, node, bash, …): `-m module` (python3 -m pytest), or the script's file
-    name (python3 check.py); code given with -c / -e is never shown, nor anything after it
-  - a line that can't be parsed (an open quote): just the program
+    name (python3 check.py: the one argument shown, as it's what tells such tabs apart); code
+    given with -c / -e is never shown, nor anything after it
+  - a line that can't be parsed (an open quote, an unclosed bracket): just the program, from the
+    complete words before the open quote ("" if that leaves none, as for `TOKEN='…` on one line
+    and the rest on the next); an array or $( left open (`KEYS=(…`) is a value, never the program
 """
 import functools
 import os
@@ -56,24 +63,37 @@ HOST_RE = re.compile(r"^(?:\[[^\]\s]{1,64}\] |[^\s:/\[]{1,64}: )")
 FISH_CUT = 20               # fish's default title holds this many characters of the command
 CUT_MIN = 20                # a title cut short (… or not) is the command if this much of it matches
 
-# programs whose next word is a subcommand worth showing (git push, make test); for any other
-# program the next word could be anything (echo hunter2, ssh prodbox, mysql customers): not shown
+# programs whose next word is a subcommand, or a target, task or script name a project defines,
+# worth showing (git push, make test); for any other program the next word could be anything (echo
+# hunter2, ssh prodbox, mysql customers): not shown. Left out on purpose, as their next word is
+# free-form: pytest (a test path), code (a file), cmake (a folder), ctest, journalctl (a match or a
+# path), yay and paru (a search term), nox and nix-env (options, then any words)
 SUBCOMMANDS = frozenset("""
     git hg svn jj gh glab tea npm pnpm yarn bun deno npx pnpx bunx corepack cargo rustup go zig
-    make gmake just task mise asdf cmake ctest ninja meson bazel buck2 gradle gradlew mvn mvnw sbt
-    lein mix dotnet flutter dart swift xcodebuild nix nix-env home-manager docker docker-compose
+    make gmake just task mise asdf ninja meson bazel buck2 gradle gradlew mvn mvnw sbt
+    lein mix dotnet flutter dart swift xcodebuild nix home-manager docker docker-compose
     podman buildah kubectl k3d kind minikube helm kustomize skaffold tilt terraform tofu pulumi
     packer vagrant ansible-galaxy aws gcloud az doctl flyctl fly heroku vercel netlify wrangler
-    firebase supabase prisma systemctl journalctl loginctl apt apt-get dnf yum zypper pacman
-    paru yay apk brew port snap flatpak pip pip3 pipx uv poetry pdm hatch pipenv conda mamba
-    micromamba pixi rye tox nox pre-commit pytest composer bundle rake rails gem rbenv pyenv
-    nvm volta fnm turbo nx lerna ng ollama tmux code hugo manage.py
+    firebase supabase prisma systemctl loginctl apt apt-get dnf yum zypper pacman
+    apk brew port snap flatpak pip pip3 pipx uv poetry pdm hatch pipenv conda mamba
+    micromamba pixi rye tox pre-commit composer bundle rake rails gem rbenv pyenv
+    nvm volta fnm turbo nx lerna ng ollama tmux hugo manage.py
 """.split())
-NESTED = frozenset({"run", "compose"})      # npm run build, docker compose up: one more word
+# one more word after these, for these programs only: npm run build, uv run pytest, docker compose
+# up. (Not docker/kubectl/ollama run: an image, a pod or a model name follows; nor go/deno run: a file)
+NESTED = {
+    "run": frozenset("npm pnpm yarn bun uv poetry pdm hatch pipenv rye pixi mise pipx turbo lerna "
+                     "gcloud".split()),
+    "compose": frozenset({"docker", "podman"}),
+}
 WORD_RE = re.compile(r"^[a-z][a-z0-9_-]{0,23}$")
 MODULE_RE = re.compile(r"^[A-Za-z_][\w.]{0,39}$")
 SCRIPT_RE = re.compile(r"^[\w.+-]{1,40}$")
 ASSIGN_RE = re.compile(r"^[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
+# a word shown as the program or the script: a plain path (no spaces, quotes, =, $, …) whose last
+# part is a name (g++, python3.12, manage.py, ./run.sh)
+PATH_RE = re.compile(r"^[\w./+@~-]+$")
+PROG_RE = re.compile(r"^\w[\w.+@-]*$")
 
 INTERPRETER_RE = re.compile(r"^(?:python[\d.]*|pypy[\d.]*|node|nodejs|ruby|perl|php|lua|luajit|"
                             r"Rscript|tsx|ts-node|bash|sh|zsh|fish|dash|ksh|osascript)$")
@@ -92,8 +112,9 @@ WRAPPERS = {
     "stdbuf": ({"-i", "-o", "-e"}, 0), "setsid": (set(), 0), "unbuffer": (set(), 0),
     "caffeinate": ({"-t", "-w"}, 0), "systemd-inhibit": ({"--what", "--who", "--why", "--mode"}, 0),
     "timeout": ({"-s", "-k", "--signal", "--kill-after"}, 1), "chrt": ({"-T", "-P", "-D"}, 1),
-    "taskset": (set(), 1), "flock": ({"-w", "-E", "--timeout", "--conflict-exit-code"}, 1),
-    "watch": ({"-n", "-d", "--interval", "--differences"}, 0),
+    "taskset": (set(), 1),
+    "flock": ({"-w", "-E", "-c", "--timeout", "--conflict-exit-code", "--command"}, 1),
+    "watch": ({"-n", "--interval"}, 0),        # (-d[=permanent]: an attached value only)
     "strace": ({"-o", "-e", "-p", "-s", "-u", "-E", "-P", "-I", "-a", "-b", "-O", "-S", "-X"}, 0),
     "ltrace": ({"-o", "-e", "-p", "-s", "-u", "-E", "-n", "-a"}, 0), "valgrind": (set(), 0),
     "xargs": ({"-I", "-n", "-P", "-d", "-L", "-s", "-E", "-a", "--delimiter", "--max-args",
@@ -125,16 +146,70 @@ def folder_like(title: str) -> bool:
 
 
 # ---- the short form ---------------------------------------------------------------------------
+_OPS = ";&|<>()"
+_MASK = dict(zip(_OPS, "\ue000\ue001\ue002\ue003\ue004\ue005\ue006"))   # private-use stand-ins
+_ANSI_MASK = {**_MASK, "'": "\ue007", "\\": "\ue008"}     # in $'…' (bash's quotes with \ escapes)
+
+
+def _mask(line: str) -> str:
+    """The line with quoted and backslash-escaped ; & | < > ( ) replaced by private-use characters,
+    so shlex doesn't read them as operators (`printf '%s' ';' x` is one command). Quotes as shlex
+    reads them: '…' literal; in "…" a backslash escapes " and \\ only; outside, the next character;
+    and $'…' as bash does (\\' doesn't end it). An unquoted # starting a word ends the line (a
+    comment). The stand-ins are never turned back: no name shown can hold them (PATH_RE, WORD_RE)."""
+    out, quote, i = [], "", 0
+    while i < len(line):
+        c = line[i]
+        if not quote and c == "$" and line[i + 1:i + 2] == "'":
+            j, body = i + 2, []
+            while j < len(line) and line[j] != "'":
+                if line[j] == "\\" and j + 1 < len(line):
+                    j += 1                                  # \' \\ \; …: that character as text
+                body.append(_ANSI_MASK.get(line[j], line[j]))
+                j += 1
+            out.append("'" + "".join(body) + ("'" if j < len(line) else ""))   # (open: shlex says so)
+            i = j + 1
+            continue
+        if not quote and c == "#" and (i == 0 or line[i - 1] in " \t;&|()<>"):
+            break                                           # a comment
+        if c == "\\" and quote != "'" and i + 1 < len(line):
+            nxt = line[i + 1]
+            if quote == '"' and nxt not in '"\\':
+                out.append(c)                                  # (a plain backslash inside "…")
+                i += 1
+                continue
+            out.append(c + _MASK.get(nxt, nxt))
+            i += 2
+            continue
+        if quote:
+            if c == quote:
+                quote = ""
+            out.append(_MASK.get(c, c))
+        else:
+            if c in "'\"":
+                quote = c
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _tokens(line: str):
-    """Shell words and operators ((, ), ;, &&, |, >, …), or None if it can't be parsed."""
+    """(tokens, complete): the shell words and operators ((, ), ;, &&, |, >, …) of the line's first
+    line; complete is False for an open quote, and the tokens are then the complete ones before it."""
     line = line.replace("\\\r\n", " ").replace("\\\n", " ").split("\n", 1)[0]
-    lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lex = shlex.shlex(_mask(line), posix=True, punctuation_chars=True)
     lex.whitespace_split = True
     lex.commenters = ""
+    out = []
     try:
-        return list(lex)
+        for tok in lex:
+            if tok and set(tok) <= set(_OPS) and ("(" in tok or ")" in tok) and len(tok) > 1:
+                out += re.findall(r"[()]|[;&|<>]+", tok)    # `);` → ) ;
+            else:
+                out.append(tok)
     except ValueError:
-        return None
+        return out, False
+    return out, True
 
 
 def _group(tokens):
@@ -232,18 +307,32 @@ def _base(word) -> str:
     return os.path.basename(word.rstrip("/")) or word
 
 
+def _name(word) -> str:
+    """The word's basename if it's a plain path to a program or script (g++, ./run.sh,
+    /usr/bin/python3.12), else "": a quoted string with spaces (`watch 'curl -H …'`), a VAR=value,
+    a $VAR or an option is never shown as a name."""
+    if not isinstance(word, str) or not PATH_RE.match(word):
+        return ""
+    base = _base(word)
+    return base[:40] if PROG_RE.match(base) else ""
+
+
 def _program_at(words):
-    """(index of the program in a command's words, the last wrapper before it): VAR=value
-    assignments and wrappers (sudo, env, timeout 30, …) with their options are passed over."""
-    i, wrapper = 0, ""
+    """(index of the program in a command's words, the last wrapper before it, whether watch was
+    one of them): VAR=value assignments and wrappers (sudo, env, timeout 30, …) with their options
+    are passed over."""
+    i, wrapper, watched = 0, "", False
     while True:
         while i < len(words) and isinstance(words[i], str) and ASSIGN_RE.match(words[i]):
             i += 1                                          # VAR=value: never shown
         if i >= len(words) or _base(words[i]) not in WRAPPERS:
-            return i, wrapper
+            return i, wrapper, watched
         wrapper = _base(words[i])
+        watched = watched or wrapper == "watch"
         flags, positionals = WRAPPERS[wrapper]
-        i = _skip_options(words, i + 1, flags) + positionals
+        i = _skip_options(words, i + 1, flags)
+        if positionals:                                     # (timeout 30 -s KILL cmd, flock f -c …)
+            i = _skip_options(words, i + positionals, flags)
 
 
 def _code_flag(flag: str) -> bool:
@@ -257,21 +346,32 @@ def _code_flag(flag: str) -> bool:
 def short_command(line: str) -> str:
     """The program (and subcommand) a command line runs, without its arguments: "git push" for
     `git push origin main`, "make test" for `cd x && make test`, "" for `FOO=bar` alone."""
+    return _short(line, 0)
+
+
+def _short(line: str, depth: int) -> str:
     line = _CMD_CONTROL_RE.sub("", line or "")
-    tokens = _tokens(line)
-    items = _group(tokens) if tokens is not None else None
-    if items is None:                                       # an open quote or bracket: the program only
-        words = [w.strip("\"'()$`;&|") for w in (line or "").split()]
-        words = [w for w in words if w and w not in KEYWORDS]
-        i, wrapper = _program_at(words)
-        return _base(words[i])[:40] if i < len(words) else wrapper
+    tokens, complete = _tokens(line)
+    items = _group(tokens) if complete else None
+    if items is None:              # an open quote or bracket: the program only, from complete words
+        for k in range(1, len(tokens)):
+            if tokens[k] == "(" and not _is_op(tokens[k - 1]) and tokens[k - 1] not in ("(", ")"):
+                tokens = tokens[:k]                         # KEYS=( …, X=$( …: a value from here on
+                break
+        words = _pick([t for t in tokens if t not in ("(", ")")])
+        i, wrapper, _ = _program_at(words)
+        return (_name(words[i]) if i < len(words) else "") or wrapper
     words = _pick(items)
-    i, wrapper = _program_at(words)
+    i, wrapper, watched = _program_at(words)
     if i >= len(words):
         return wrapper
     if not isinstance(words[i], str):
         return ""                                           # a $( … ) as the command
-    prog = _base(words[i])[:40]
+    prog = _name(words[i])
+    if not prog:
+        if watched and depth < 4:                           # watch 'kubectl get pods': sh -c's string
+            return _short(words[i], depth + 1) or wrapper
+        return wrapper                                      # not a program's name: never shown
     rest = words[i + 1:]
     if not INTERPRETER_RE.match(prog):
         return prog + _subcommand(prog, rest)
@@ -289,8 +389,8 @@ def short_command(line: str) -> str:
             return prog                                     # code follows: never shown
         j += 2 if flag in INTERPRETER_ARG_FLAGS else 1
     if j < len(rest) and isinstance(rest[j], str) and ("/" in rest[j] or "." in rest[j]):
-        script = _base(rest[j])
-        if SCRIPT_RE.match(script):
+        script = _name(rest[j])                             # the one argument shown: the script's name
+        if script and SCRIPT_RE.match(script):
             return f"{prog} {script}{_subcommand(script, rest[j + 1:])}"
     return prog
 
@@ -305,7 +405,7 @@ def _subcommand(prog: str, rest) -> str:
         if not rest or not isinstance(rest[0], str) or not WORD_RE.match(rest[0]):
             break
         out += " " + rest[0]
-        if rest[0] not in NESTED:
+        if prog not in NESTED.get(rest[0], ()):
             break
         rest = rest[1:]
     return out

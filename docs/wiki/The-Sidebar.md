@@ -32,9 +32,15 @@ show only the program and its subcommand:
 | `node -e "…"`, `bash -c "…"` | `node`, `bash` (code is never shown) |
 | `mysql -u root -p…`, `ssh me@host`, `echo …` | `mysql`, `ssh`, `echo` |
 
-The word after the program is shown only for programs that have subcommands (git, npm, docker, make,
-cargo, kubectl, …) and only if it looks like one (lowercase letters, digits, `-`, `_`); after `run` and
-`compose` one more. Searching finds tabs by that short name, never by an argument.
+The word after the program is shown only for programs whose next word is a subcommand, or a target,
+task or script name a project defines (git, npm, docker, make, cargo, kubectl, …; not pytest, code or
+cmake, whose next word is a path), and only if it looks like one (lowercase letters, digits, `-`, `_`);
+after `run` (npm, uv, poetry, …) and `compose` (docker, podman) one more (`docker run` stops there: an
+image name follows). The one argument shown is a script's file name after an interpreter
+(`python3 check.py`): it is what tells those tabs apart. Quoted text is never read as a `;`, `&&` or `|`,
+and a word that isn't a program's name (a quoted string with spaces, a `$VAR`) never shows as one:
+`watch 'kubectl get pods'` is named `kubectl get`, `timeout 5 '…'` just `timeout`. Searching finds tabs
+by that short name, never by an argument.
 
 Names programs set themselves stay as they are (Claude's `✳ Fix the login bug`, omp's spinner and task),
 so do names you give a tab (Ctrl+Shift+R) or a window, and an idle shell's folder. NineLives tells them

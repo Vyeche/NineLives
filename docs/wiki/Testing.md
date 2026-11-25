@@ -118,8 +118,10 @@ ffmpeg -f x11grab -framerate 16 -video_size 160x40 -i :97+0,660 -t 2.6 \
 
 `NL_TEST_SCENE=none bash scripts/test-kitty.sh start` starts the test kitty with one empty tab instead
 of one tab per status, for building a scene of your own. `NL_TEST_CAT_DICE=SEED` gives its cat seeded
-dice, and a move named in `state/cat-move` (`wink`, `look-left`, `tail`, …) plays at its next roll, so a
-recording shows the same cat every time (only the test kitty's copy of `tab_bar.py` changes).
+dice, and a move named in `state/cat-move` (`wink`, `look-left`, `tail`, …) plays at its next roll (it
+stays cued while another move plays), so a recording shows the same cat every time. That cat also
+ignores the clock: no nap from 23:00 to 06:00 (`_night` is off). Only the test kitty's copy of
+`tab_bar.py` changes.
 
 ## Recording the GIFs
 The GIFs in the README and the wiki (`docs/images/gifs/`) and the Getting started stills

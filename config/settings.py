@@ -42,8 +42,8 @@ TOGGLES = {
                 "The search field and buttons on top of the sidebar, and × on the current tab. (kitty-buttons)"),
     # the other way round: off (short names) while the file is missing
     "commands": ("Full commands in tab names", "full-commands", ("off", "on"),
-                 "Off: a running command's tab shows its program and subcommand (git push), never its "
-                 "arguments, which can hold a password. On: the whole line. (kitty-commands)"),
+                 "Off: a running command's tab shows its program and subcommand (git push) or script "
+                 "name, not its arguments, which can hold a password. On: the whole line. (kitty-commands)"),
     "tips": ("Prompt tips", "tips-off", ("on", "off"),
              "A tip or your next quest under each new shell prompt. (kitty-tips)"),
 }

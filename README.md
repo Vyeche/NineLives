@@ -98,9 +98,12 @@ off there or with `kitty-sounds off`, `kitty-cat off`, `kitty-quests off`, `kitt
 
 **Privacy:** while a command runs, its tab shows only the program and subcommand (`git push`,
 `npm run build`), never its arguments, which can hold a password or token; searching doesn't find
-them either. Names agents set (`✳ Fix the login bug`) and names you give a tab stay.
-`kitty-commands full` shows whole command lines. kitty's own window title (taskbar, Alt+Tab) and its
-"command finished" notification still show the whole line: NineLives doesn't change kitty's titles.
+them either. The one exception is a script run by an interpreter: its file name shows
+(`python3 check.py`), so such tabs can be told apart. Names agents set (`✳ Fix the login bug`) and
+names you give a tab stay. `kitty-commands full` shows whole command lines. kitty's own window title
+(taskbar, Alt+Tab) and its "command finished" notification still show the whole line: NineLives
+doesn't change kitty's titles. A remote shell that sets the title to the command without reporting
+it to kitty (no kitty shell integration there) shows it whole.
 ([More](docs/wiki/The-Sidebar.md#commands-in-tab-names))
 
 ## Documentation

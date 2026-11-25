@@ -49,8 +49,9 @@ DejaVu Sans Mono.
 
 The cat's idle moves are dice rolls. capture.sh sets `NL_TEST_CAT_DICE` (see `scripts/test-kitty.sh`):
 the test kitty's copy of `tab_bar.py` gets seeded dice, and `cat_move wink` makes the cat play that
-move at its next roll (within a second, when no other move plays), so a take shows the same moves
-every time.
+move at its next roll (within a second; it waits while another move plays), so a take shows the
+same moves every time. The test kitty's cat also ignores the clock: it doesn't nap from 23:00 to
+06:00, so a take recorded at night still shows its idle moves.
 
 Captions are written in `capture.sh` (`beat "First line|second line" "Ctrl+Alt+U"`), next to the
 actions they describe, and so are the close-up's boxes (`focus X Y WIDTH HEIGHT`, worked out from the

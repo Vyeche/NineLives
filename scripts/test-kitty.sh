@@ -91,7 +91,8 @@ ST
 
 # ---- test kitty only (test-kitty.sh, NL_TEST_CAT_DICE): the cat's dice, seeded, and moves on cue ----
 class _TestDice(random.Random):
-    """Seeded dice; a move named in NINELIVES_STATE/cat-move plays at the next roll."""
+    """Seeded dice; a move named in NINELIVES_STATE/cat-move plays at the next roll that can play
+    it: it stays wanted (and every roll a fidget) until choice() picks it."""
     cue = os.path.join(QUEST_DIR, "cat-move")
     wanted = None
 
@@ -100,16 +101,25 @@ class _TestDice(random.Random):
             with open(self.cue, encoding="utf-8") as f:
                 name = f.read().strip()
             os.remove(self.cue)
+            self.wanted = name or self.wanted
         except OSError:
+            pass
+        if self.wanted is None:
             return super().random()
-        self.wanted = name
         return CAT_BLINK + CAT_FIDGET / 2          # a fidget (a blink is below CAT_BLINK)
 
     def choice(self, seq):
+        if self.wanted is None:
+            return super().choice(seq)
         name, self.wanted = self.wanted, None
         return name if name in seq else super().choice(seq)
+
+
+def _night() -> bool:
+    """No night nap in the test kitty: a take recorded at 23:00-06:00 shows the same cat."""
+    return False
 PY
-    echo "_cat_rng = _TestDice($NL_TEST_CAT_DICE)" >> "$CONF/tab_bar.py"
+    echo "_cat_rng = _TestDice(int(\"$NL_TEST_CAT_DICE\"))" >> "$CONF/tab_bar.py"
   fi
   rm -f "$CONF"/*-theme.auto.conf           # keep the chosen theme
   Xvfb "$DISP" -screen 0 "${size}x24" >/dev/null 2>&1 & echo $! > "$T/xvfb.pid"
