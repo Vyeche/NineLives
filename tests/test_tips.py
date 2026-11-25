@@ -149,6 +149,20 @@ class Switches(TipsCase):
         for f in ("cat-off", "quests-off", "tips-off", "buttons-off"):
             self.assertFalse(self.exists(f), f)
 
+    def test_full_commands(self):
+        # off by default: the file turns whole command lines on (the other switches turn things off)
+        self.assertIn("program and subcommand", self.sh("kitty-commands"))
+        self.assertRegex(self.sh("ninelives"), r"commands\s+program \+ subcommand")
+        self.sh("kitty-commands full")
+        self.assertTrue(self.exists("full-commands"))
+        self.assertRegex(self.sh("ninelives"), r"commands\s+whole command lines")
+        self.sh("kitty-commands short")
+        self.assertFalse(self.exists("full-commands"))
+        self.sh("kitty-commands on")
+        self.assertTrue(self.exists("full-commands"))
+        self.sh("kitty-commands off")
+        self.assertFalse(self.exists("full-commands"))
+
 
 class Status(TipsCase):
     def test_ninelives_shows_every_setting(self):
@@ -177,7 +191,7 @@ class Status(TipsCase):
 
     def test_ninelives_columns_line_up(self):
         out = self.sh("ninelives")
-        rows = [l for l in out.splitlines() if re.match(r"  (sounds|cat|quests|buttons|tips) ", l)]
+        rows = [l for l in out.splitlines() if re.match(r"  (sounds|cat|quests|buttons|commands|tips) ", l)]
         cols = {l.index("kitty-") for l in rows}
         self.assertEqual(len(cols), 1, rows)          # ★ must not shift the command column
 

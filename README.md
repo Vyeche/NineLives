@@ -72,7 +72,7 @@ backup `install.sh` made of your own config. Then restart kitty and, if you like
 | --- | --- |
 | **Status** | ◐ working (blue) · `· ✧ ✦ ✶` → ✓ finished (green) · **amber block ⚠ needs you** · ✗ error (red) · • new output (small and quiet). The folder line shows how long (`3m`). [More](docs/wiki/The-Sidebar.md) |
 | **Sounds** | quiet and short: two notes up = done, a rising "mrrp?" = needs you, two low notes down = error, plus badge and rank sounds. Silent for the tab you're watching. **Ctrl+Alt+M** mutes, `kitty-sounds volume 40` turns down. [More](docs/wiki/Sounds.md) |
-| **The cat** | at the end of **+ New tab**, it sums up every tab: `=O.O= !` needs you, `=^.^= ~` working, `=^ω^= ♪` done, `=-.-= zZ` napping, each in its own colour. [More](docs/wiki/The-Cat.md) |
+| **The cat** | at the end of **+ New tab**, it sums up every tab: `=O.O= !` needs you, `=^.^= ~` working, `=^ω^= ♪` done, `=-.-= zZ` napping (and at night), each in its own colour; idle, a ginger cat that blinks, winks and flicks its tail. [More](docs/wiki/The-Cat.md) |
 | **Quests** | 16 shortcuts worth knowing; use one once to earn its badge, from Kitten to Nine Lives. `kitty-quests` lists them. [More](docs/wiki/Quests-and-Badges.md) |
 | **Tabs** | click, **Alt+1…9**, drag to reorder, middle-click closes, **Ctrl+Shift+T** new tab here, **Ctrl+Shift+Space** search tabs, **Ctrl+Alt+U** the tab waiting for you; a git branch other than main shows after the folder |
 | **Splits** | **Ctrl+Alt+→/↓** split, **Ctrl+Alt+arrows** move, **Ctrl+Alt+Z** zoom |
@@ -95,6 +95,16 @@ as a list: ↑/↓ choose, Enter or ←/→ change, and the change applies at on
 off there or with `kitty-sounds off`, `kitty-cat off`, `kitty-quests off`, `kitty-tips off`,
 `kitty-buttons off`
 ([all switches](docs/wiki/Commands-and-Switches.md)).
+
+**Privacy:** while a command runs, its tab shows only the program and subcommand (`git push`,
+`npm run build`), never its arguments, which can hold a password or token; searching doesn't find
+them either. The one exception is a script run by an interpreter: its file name shows
+(`python3 check.py`), so such tabs can be told apart. Names agents set (`✳ Fix the login bug`) and
+names you give a tab stay. `kitty-commands full` shows whole command lines. kitty's own window title
+(taskbar, Alt+Tab) and its "command finished" notification still show the whole line: NineLives
+doesn't change kitty's titles. A remote shell that sets the title to the command without reporting
+it to kitty (no kitty shell integration there) shows it whole.
+([More](docs/wiki/The-Sidebar.md#commands-in-tab-names))
 
 ## Documentation
 The [wiki](https://github.com/Vyeche/NineLives/wiki) (source in [`docs/wiki/`](docs/wiki/Home.md)):

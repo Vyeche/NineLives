@@ -5,8 +5,8 @@
 
 Reads WORK_DIR/take*.meta.json and the takes' .mkv (see capture.sh) and writes a 1080x1920 H.264 +
 AAC MP4 at 30 fps: captions on top, the test kitty's window in the middle (1:1, no scaling), and
-below it a close-up that follows what's happening: the sidebar with its pixels doubled, the search
-box (wider, so a little smaller) while it's open. While kitty restarts (the display is black for
+below it a close-up that follows what's happening: the sidebar with its pixels doubled, the cat and
+the last two tabs at 3x, the search box or the settings list (wider, so smaller) while it's open. While kitty restarts (the display is black for
 a moment) the last frame before it is held, dimmed. The sounds are NineLives' own (config/sounds), mixed in at the times the test
 kitty's stubs logged them, at the volume it asked for, over an original music bed (music.py, the
 same synth as the sounds; --no-music leaves it out) that ducks under each sound. The mix is raised
@@ -37,6 +37,7 @@ MONO = "DejaVu Sans Mono"
 EDIT = [
     {"take": "take1", "start": 0.0, "end_before": 0.5},
     {"take": "take2", "start": 0.0, "end_before": 0.4},
+    {"take": "take3", "start": 0.0, "end_before": 0.4},
 ]
 END_CARD = 3.6           # seconds
 MUSIC_UNDER = 6.0        # the music bed's loudness under the sounds' (dB)
@@ -48,7 +49,8 @@ GITHUB = "github.com/Vyeche/NineLives"
 BRAND_Y = 168            # "NineLives" over the captions
 CAPTION_TOP = 214
 APP_Y = 400              # the window (capture.sh: 1080x384) at 1:1, under the captions' keycaps
-ZOOM = 2                 # the close-up: its source box as big as fits, 2x at most (crisp pixels at 2x)
+ZOOM = 2                 # the close-up: its source box as big as fits, 2x at most unless the box says
+                         # otherwise (capture.sh: focus X Y W H ZOOM); whole-number zooms are crisp
 CLOSE_GAP = 16           # between the window and the close-up
 CLOSE_LEFT, CLOSE_RIGHT, CLOSE_BOTTOM = 24, 952, 1536    # where the close-up may go (YouTube's buttons
                                                           # and title); centred when it fits
@@ -151,7 +153,7 @@ def timeline(segs: list) -> dict:
                 keys.append({"t": t, "key": ev["args"]})
             elif ev["kind"] == "focus":
                 old = m.get("crop", [400, 300])         # (the first Short's takes: a width at most)
-                box = (ev["x"], ev["y"], ev.get("w", old[0]), ev.get("h", old[1]))
+                box = (ev["x"], ev["y"], ev.get("w", old[0]), ev.get("h", old[1]), ev.get("zoom", ZOOM))
                 focus.append({"t": t, "box": box, "seg": s})
         for snd in m["sounds"]:
             t = snd["t"] + off
@@ -295,12 +297,12 @@ def draw_brand(cr, alpha=1.0):
 
 
 def focus_at(tl: dict, t: float, seg) -> tuple:
-    """The close-up's source box (x, y, width, height) at time t: eases 0.45 s to each new one in
-    this take."""
+    """The close-up's source box (x, y, width, height, most zoom) at time t: eases 0.45 s to each
+    new one in this take."""
     fs = [(f["t"],) + tuple(f["box"]) for f in tl["focus"] if f["seg"] is seg]
     if not fs:
         w, h = seg["meta"]["size"]
-        return 0.0, 0.0, float(w), float(h)
+        return 0.0, 0.0, float(w), float(h), float(ZOOM)
     cur = fs[0][1:]
     for prev, f in zip([None] + fs[:-1], fs):
         if f[0] > t:
@@ -313,12 +315,12 @@ def focus_at(tl: dict, t: float, seg) -> tuple:
     return cur
 
 
-def closeup_rect(box: tuple, app_h: int) -> tuple:
+def closeup_rect(box: tuple, app_h: int, most: float = ZOOM) -> tuple:
     """Where a source box shows: (zoom, x, y, width, height). As big as fits under the window
-    (ZOOM at most), centred, or moved left to keep clear of YouTube's buttons."""
+    (`most` at most), centred, or moved left to keep clear of YouTube's buttons."""
     bw, bh = box[2], box[3]
     y = APP_Y + app_h + CLOSE_GAP
-    zoom = min(ZOOM, (CLOSE_RIGHT - CLOSE_LEFT) / bw, (CLOSE_BOTTOM - y) / bh)
+    zoom = min(most, (CLOSE_RIGHT - CLOSE_LEFT) / bw, (CLOSE_BOTTOM - y) / bh)
     ow, oh = int(round(bw * zoom)), int(round(bh * zoom))
     x = max(CLOSE_LEFT, min((W - ow) // 2, CLOSE_RIGHT - ow))
     return zoom, x, y, ow, oh
@@ -372,16 +374,18 @@ def compose(canvas: np.ndarray, surf, frame: np.ndarray, box: tuple, tl, t, extr
     cw, ch = min(fw, int(round(box[2]))), min(fh, int(round(box[3])))
     x0, y0 = int(round(box[0])), int(round(box[1]))
     x0, y0 = max(0, min(fw - cw, x0)), max(0, min(fh - ch, y0))
-    zoom, close_x, close_y, ow, oh = closeup_rect((x0, y0, cw, ch), fh)
+    most = box[4] if len(box) > 4 else ZOOM
+    zoom, close_x, close_y, ow, oh = closeup_rect((x0, y0, cw, ch), fh, most)
     surf.mark_dirty()
     cr = cairo.Context(surf)
-    # the close-up, its corners rounded: at 2x every pixel doubled (crisp), smaller (a wide box)
-    # smoothly scaled
+    # the close-up, its corners rounded: at a whole-number zoom (2x, 3x) every pixel repeated
+    # (crisp), otherwise (a wide box, or easing between boxes) smoothly scaled
     src = np.empty((ch, cw, 4), np.uint8)
     src[..., :3] = frame[y0:y0 + ch, x0:x0 + cw, ::-1]
     src[..., 3] = 255
     img = cairo.ImageSurface.create_for_data(memoryview(src), cairo.FORMAT_RGB24, cw, ch, cw * 4)
-    sharp = abs(zoom - ZOOM) < 1e-6 and ow == cw * ZOOM and oh == ch * ZOOM
+    whole = round(zoom)
+    sharp = whole >= 1 and abs(zoom - whole) < 1e-6 and ow == cw * whole and oh == ch * whole
     cr.save()
     rounded(cr, close_x, close_y, ow, oh, 18)
     cr.clip()

@@ -11,7 +11,9 @@
 #   bash scripts/test-kitty.sh relaunch [--dry-run]                kitty-relaunch.sh on this kitty only
 #   bash scripts/test-kitty.sh stop
 # NL_TEST_SCENE=none starts it with one empty tab instead of one tab per status (scripts/record.sh
-# builds its own scenes).
+# builds its own scenes). NL_TEST_CAT_DICE=SEED makes the cat's idle moves repeatable: its dice are
+# seeded, and a move named in $NL_TEST_DIR/state/cat-move (wink, look-left, tail, …) plays at its
+# next roll (tools/short/capture.sh uses it). Only the test kitty's copy of tab_bar.py changes.
 # Files (config copy, screenshots, logs): $NL_TEST_DIR, default ${TMPDIR:-/tmp}/ninelives-test
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -82,6 +84,43 @@ ST
   done
   HOME="$T/home" KITTY_CONFIG_DIRECTORY="$CONF" bash "$REPO/scripts/install.sh" >/dev/null
   sed -i "s/^include cosmic-dark.conf/include cosmic-$theme.conf/" "$CONF/kitty.conf"
+  if [ -n "${NL_TEST_CAT_DICE:-}" ]; then   # (before kitty starts, so a relaunched kitty has it too)
+    [[ "$NL_TEST_CAT_DICE" =~ ^[0-9]+$ ]] || { echo "NL_TEST_CAT_DICE: a number (the seed)" >&2; exit 2; }
+    cat >> "$CONF/tab_bar.py" <<'PY'
+
+
+# ---- test kitty only (test-kitty.sh, NL_TEST_CAT_DICE): the cat's dice, seeded, and moves on cue ----
+class _TestDice(random.Random):
+    """Seeded dice; a move named in NINELIVES_STATE/cat-move plays at the next roll that can play
+    it: it stays wanted (and every roll a fidget) until choice() picks it."""
+    cue = os.path.join(QUEST_DIR, "cat-move")
+    wanted = None
+
+    def random(self):
+        try:
+            with open(self.cue, encoding="utf-8") as f:
+                name = f.read().strip()
+            os.remove(self.cue)
+            self.wanted = name or self.wanted
+        except OSError:
+            pass
+        if self.wanted is None:
+            return super().random()
+        return CAT_BLINK + CAT_FIDGET / 2          # a fidget (a blink is below CAT_BLINK)
+
+    def choice(self, seq):
+        if self.wanted is None:
+            return super().choice(seq)
+        name, self.wanted = self.wanted, None
+        return name if name in seq else super().choice(seq)
+
+
+def _night() -> bool:
+    """No night nap in the test kitty: a take recorded at 23:00-06:00 shows the same cat."""
+    return False
+PY
+    echo "_cat_rng = _TestDice(int(\"$NL_TEST_CAT_DICE\"))" >> "$CONF/tab_bar.py"
+  fi
   rm -f "$CONF"/*-theme.auto.conf           # keep the chosen theme
   Xvfb "$DISP" -screen 0 "${size}x24" >/dev/null 2>&1 & echo $! > "$T/xvfb.pid"
   sleep 1
@@ -129,5 +168,5 @@ relaunch)
   ;;
 sounds) sed "s|$T/home/.config/kitty/sounds/||; s|/usr/share/sounds/freedesktop/stereo/|classic:|" "$T/stub.log" 2>/dev/null ;;
 stop) stop ;;
-*) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+*) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

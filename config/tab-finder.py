@@ -24,6 +24,22 @@ COLOUR = {"blocked": 3, "error": 1, "working": 4, "done": 2}      # palette: fol
 HOME = os.path.expanduser("~")
 
 
+def _load_command_title():
+    """command_title.py from this file's folder (as tab_bar.py loads it), or None."""
+    try:
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "command_title.py")
+        spec = importlib.util.spec_from_file_location("ninelives_command_title", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+_ct = _load_command_title()
+
+
 def kitty(*args) -> str:
     # launch --allow-remote-control hands us a connection as KITTY_LISTEN_ON=fd:N; subprocess
     # would close that fd in the child, so pass it on (a background launch has no tty to fall back on)
@@ -77,6 +93,38 @@ def tab_name(title: str, cwd: str, renamed: bool = False) -> str:
             not renamed and title.strip().lstrip("-") in SHELL_NAMES):
         return cwd.rstrip("/").rsplit("/", 1)[-1] or "/"
     return LEAD_RE.sub("", title, count=1) or title
+
+
+def full_commands() -> bool:
+    """kitty-commands full (the full-commands file in kitty's config folder): whole command lines."""
+    conf = os.environ.get("KITTY_CONFIG_DIRECTORY") or os.path.join(
+        os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "kitty")
+    return os.path.exists(os.path.join(conf, "full-commands"))
+
+
+def shown_title(title: str, windows, w) -> str:
+    """The title as the sidebar shows it: a command line a shell set is cut to its program and
+    subcommand (command_title.py), so a search never shows or finds its arguments. The title's own
+    window decides; another window of the tab only with the very command it reported (an overlay
+    opened with --title current, the F1 sheet, carries a copy of the covered window's title)."""
+    if not title or full_commands():
+        return title
+    if _ct is None:                       # command_title.py missing: the program alone
+        if any(" ".join(title.split()) == " ".join((x.get("last_reported_cmdline") or "").split())
+               for x in windows or [w]):
+            return os.path.basename(title.split()[0])
+        return title
+    if not w.get("title_overridden"):     # (set by someone, or an overlay's copy: see below)
+        names = [os.path.basename((p.get("cmdline") or [""])[0]) for p in w.get("foreground_processes") or []]
+        s = _ct.shown_title(title, w.get("last_reported_cmdline") or "", bool(w.get("at_prompt")), names)
+        if s != title:
+            return s
+    for x in windows or []:
+        cmd = x.get("last_reported_cmdline") or ""
+        if x is not w and _ct.command_prefix(title, cmd) is not None:
+            s = _ct.short_command(cmd)
+            return _ct.command_prefix(title, cmd) + s if s else ""
+    return title
 
 
 AGENT_MARK = {"claude": "✳", "omp": "π", "opencode": "oc", "codex": "cx", "gemini": "gm", "aider": "ai",
@@ -133,8 +181,11 @@ def rows(data) -> list:
             w = next((x for x in wins if x.get("is_active")), wins[-1] if wins else {})
             mine = any(x.get("is_self") for x in t.get("windows", []))
             title = (w.get("title") if mine else t.get("title")) or w.get("title") or ""
+            renamed = bool(t.get("title_overridden"))
+            if not renamed:
+                title = shown_title(title, t.get("windows", []), w)
             cwd = w.get("cwd") or ""
-            out.append({"n": i + 1, "id": t["id"], "name": tab_name(title, cwd, bool(t.get("title_overridden"))),
+            out.append({"n": i + 1, "id": t["id"], "name": tab_name(title, cwd, renamed),
                         "folder": folder(cwd), "state": tab_state(t, w), "agent": agent_mark(w),
                         "branch": git_branch(cwd) if cwd else "",
                         "active": bool(t.get("is_active")) and osw is focused})

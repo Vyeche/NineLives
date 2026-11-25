@@ -3,7 +3,7 @@
 # its own socket, stubbed sounds; see scripts/test-kitty.sh). Nothing reaches your real kitty,
 # desktop or speakers. Reuses the helpers in scripts/record.sh (fake agents, escape-code states,
 # the neutral prompt) and presses the real shortcuts with scripts/xkey.py.
-#   bash tools/short/capture.sh WORK_DIR [take1 take2]
+#   bash tools/short/capture.sh WORK_DIR [take1 take2 take3]
 # For each take, WORK_DIR gets:
 #   NAME.mkv        the whole test display, lossless (ffv1), FPS frames a second
 #   NAME.meta.json  when the first frame was grabbed, the captions, keys, state changes and close-up
@@ -16,19 +16,27 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../scripts/record.sh
 source "$HERE/../../scripts/record.sh"      # REPO T DISP SOCK W CONF; start agent_tab shell_tab state say k tk home
-WORK="$(mkdir -p "${1:?usage: capture.sh WORK_DIR [take1 take2]}" && cd "$1" && pwd)"; shift
+WORK="$(mkdir -p "${1:?usage: capture.sh WORK_DIR [take1 take2 take3]}" && cd "$1" && pwd)"; shift
 FPS=30
 FONT=14                                      # bigger than kitty's 12, for phones: 11x24 px cells
 SIZE=1080x384                                # the app window in the Short, 1:1 (no scaling): 16 rows,
                                              # so four tabs and + New tab (15 rows) fit the close-up at 2x
-TAKES="${*:-take1 take2}"
+TAKES="${*:-take1 take2 take3}"
+# The cat's idle moves are dice rolls: in the test kitty they are seeded, and capture.sh cues the ones
+# a take shows (cat_move), so every take is the same (test-kitty.sh, NL_TEST_CAT_DICE)
+export NL_TEST_CAT_DICE=9
 FAILED=""
 
 ev() { printf '%s\t%s\n' "$(date +%s.%N)" "$*" >> "$WORK/$TAKE.events"; }   # ev KIND ARGS…
 beat() { ev beat "$1"$'\x1f'"${2:-}"; }   # beat "Caption|second line" ["Ctrl+Alt+U"]: a new caption from now
-focus() { ev focus "$@"; }                   # focus X Y WIDTH HEIGHT: the close-up's source box from now (display px)
+focus() { ev focus "$@"; }                   # focus X Y WIDTH HEIGHT [ZOOM]: the close-up's source box from now
+                                             # (display px), shown ZOOM times at most (default 2)
 key() { ev key "$*"; python3 "$REPO/scripts/xkey.py" "$DISP" "$@"; }        # a real key press
 type_text() { ev type "$1"; for ((i = 0; i < ${#1}; i++)); do python3 "$REPO/scripts/xkey.py" "$DISP" --type "${1:i:1}"; sleep 0.28; done; }
+type_into() {  # type_into WINDOW_ID TEXT: typed fast, a character at a time (any character; no Enter)
+  ev type "$2"; for ((i = 0; i < ${#2}; i++)); do k send-text --match "id:$1" -- "${2:i:1}"; sleep 0.03; done
+}
+cat_move() { ev cat "$1"; echo "$1" > "$T/state/cat-move"; }   # cat_move wink: the cat plays it within a second
 set_state() { ev state "$1" "$2"; state "$1" "$2"; }
 first_window() { k ls | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["tabs"][0]["windows"][0]["id"])'; }
 
@@ -55,6 +63,14 @@ geometry() {  # geometry: the sidebar's cell grid from sidebar.txt → GEOM="LEF
 # compose_short.py shows a box as big as fits (2x at most).
 sidebar_box() {  # sidebar_box N: the whole sidebar with N tabs: the search row, 3 rows a tab, + New tab
   echo "0 0 $((COLS * CW)) $(((3 * $1 + 3) * CH))"
+}
+cat_box() {  # cat_box N: the last two of N tabs and + New tab with the cat, at 3x: from the status
+  # column to the cat's last cell (the tab numbers left out, so 3x fits beside YouTube's buttons)
+  echo "$((3 * CW)) $(((3 * $1 - 4) * CH)) $(((COLS - 4) * CW)) $((7 * CH)) 3"
+}
+settings_box() {  # the settings list over the pane: its rows (64 cells at most), description and keys
+  local w="${SIZE%x*}" h="${SIZE#*x}" x=$((COLS * CW))
+  echo "$x 0 $((w - CW - x)) $h"
 }
 search_box() {  # the search box over the pane: from its prompt to the folder column's end, and its key hints
   local w="${SIZE%x*}" h="${SIZE#*x}" x=$(((COLS + 1) * CW)) y=$((CH * 3 / 2))
@@ -106,7 +122,10 @@ for t, a in rows:
         e["text"] = parts[0]
         e["keys"] = parts[1] if len(parts) > 1 else ""
     elif kind == "focus":
-        e["x"], e["y"], e["w"], e["h"] = (int(n) for n in rest.split())
+        nums = rest.split()
+        e["x"], e["y"], e["w"], e["h"] = (int(n) for n in nums[:4])
+        if len(nums) > 4:
+            e["zoom"] = float(nums[4])
     else:
         e["args"] = rest
     events.append(e)
@@ -148,21 +167,23 @@ take_take1() {
   roll take1
   focus $(sidebar_box 4)
   beat "Many AI coding sessions.|One window."
-  sleep 3.6
-  beat "Finished? A sparkle|and a quiet chime."
-  sleep 0.5; set_state "$c" done; sleep 4.1
+  sleep 2.6
+  focus $(cat_box 4)                          # the close-up moves to the cat before anything happens
+  beat "Finished? A chime,|and the cat hops."
+  sleep 0.8; set_state "$c" done; sleep 3.0
   beat "Needs you?|You can't miss it."
-  sleep 0.5; set_state "$b" blocked; sleep 3.6
+  sleep 0.5; set_state "$b" blocked; sleep 3.0
   beat "Ctrl+Alt+U jumps there." "Ctrl+Alt+U"
-  sleep 0.9; key ctrl+alt+u; sleep 2.6
+  focus $(sidebar_box 4)
+  sleep 0.8; key ctrl+alt+u; sleep 2.1
   beat "Find any tab, fast." "Ctrl+Shift+Space"
-  sleep 0.5; key ctrl+shift+space; sleep 0.5
+  sleep 0.4; key ctrl+shift+space; sleep 0.4
   focus $(search_box)
-  sleep 0.3; type_text api; sleep 0.7
-  key Tab; sleep 0.75; key Tab; sleep 0.75; key Tab; sleep 1.0
+  sleep 0.2; type_text api; sleep 0.5
+  key Tab; sleep 0.7; key Tab; sleep 0.9
   key Return; sleep 0.3
   focus $(sidebar_box 4)
-  sleep 1.8
+  sleep 1.5
   cut_
 }
 
@@ -196,10 +217,10 @@ take_take2() {
   roll take2
   focus $(sidebar_box 4)
   beat "Finishes in a row|climb a tune."
-  sleep 0.8; set_state "${ids[0]}" done; sleep 2.1; set_state "${ids[1]}" done; sleep 2.1
-  set_state "${ids[2]}" done; sleep 3.4
+  sleep 0.6; set_state "${ids[0]}" done; sleep 2.0; set_state "${ids[1]}" done; sleep 2.0
+  set_state "${ids[2]}" done; sleep 2.8
   beat "Restart kitty,|keep every tab and split."
-  sleep 1.2
+  sleep 1.0
   ev relaunch start
   local oldk; oldk="$(sed -n 's/^kitty: //p' "$T/state/sidebar.txt" 2>/dev/null)" || true   # who wrote it so far
   tk relaunch > "$WORK/take2.relaunch.log" 2>&1 || fail "the relaunch failed (see $WORK/take2.relaunch.log)"
@@ -226,7 +247,38 @@ take_take2() {
   else fail "only $marks ✳ mark(s) 10 s after the restart"; fi
   geometry
   [ "$GEOM" = "$before" ] || fail "the restarted kitty's cell grid is $GEOM, not $before (font or size changed)"
-  sleep 2.2
+  sleep 2.0
+  cut_
+}
+
+# Take 3 (dark again): the cat's idle moves up close; a command's arguments stay out of its tab's
+# name; the settings list (Ctrl+Shift+F2) changes the volume (you hear it) and hides and shows the cat.
+take_take3() {
+  setup
+  one="$(first_window)"
+  k send-text --match "id:$one" "NOWAIT=1 st title '✳ Fix the login bug'; AGENT=claude st idle"$'\n'; sleep 0.4
+  agent_tab "$W/api" "Write release notes" >/dev/null
+  sh="$(k launch --type=tab --cwd "$W/webapp" bash)"           # reads the short prompt (webapp $)
+  sleep 1.0; k send-text --match "id:$sh" $'clear\n'
+  k focus-window --match "id:$sh"; sleep 1.5                    # nothing works or waits: the ginger idle cat
+  geometry
+  roll take3
+  focus $(cat_box 3)
+  beat "The cat blinks,|winks and looks around."
+  sleep 0.3; cat_move wink; sleep 1.5; cat_move look-left; sleep 2.0
+  beat "Arguments stay out|of tab names."
+  focus $(sidebar_box 3)
+  sleep 0.6; type_into "$sh" "npm run deploy --customer=acme-demo"; sleep 0.3
+  k send-text --match "id:$sh" $'\r'; ev key Return; sleep 2.6
+  beat "Every setting, one list." "Ctrl+Shift+F2"
+  sleep 0.6; key ctrl+shift+F2; sleep 0.3
+  focus $(settings_box)
+  sleep 0.6; key Down; sleep 0.6; key Left; sleep 0.8; key Right; sleep 1.0   # 95 %, back to 100 %: a chime each
+  beat "Changes apply at once."
+  sleep 0.2; key Down; sleep 0.35; key Down; sleep 0.7
+  focus $(cat_box 3)
+  sleep 0.9; key Return; sleep 1.3; key Return; sleep 1.4   # (the close-up settles on the cat first)
+  key Escape; sleep 0.6
   cut_
 }
 
@@ -234,6 +286,6 @@ fail() { echo "$TAKE: $*" >&2; FAILED="$FAILED $TAKE"; }
 
 trap 'tk stop' EXIT                          # the test kitty goes away however this ends
 for t in $TAKES; do
-  case "$t" in take1|take2) "take_$t" ;; *) echo "unknown take: $t (take1 take2)" >&2; exit 2 ;; esac
+  case "$t" in take1|take2|take3) "take_$t" ;; *) echo "unknown take: $t (take1 take2 take3)" >&2; exit 2 ;; esac
 done
 [ -z "$FAILED" ] || { echo "capture.sh: check the takes:$FAILED" >&2; exit 1; }

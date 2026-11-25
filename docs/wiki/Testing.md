@@ -12,7 +12,7 @@ It checks:
 - **Sounds:** all six are present and on their loudness targets.
 - **Links:** every wiki and README link resolves.
 - **Live processes:** `tests/live_agent_lookup.py`, run with kitty's own Python (`kitty +launch`), starts bash in a terminal of its own with a fake agent (sleep under the name `claude`) below it, and checks `tab_bar.py` finds it, through its Linux branch (`/proc`) and its macOS branch (`kitty.child`, which reads `/proc` on Linux too).
-- **A hidden test kitty:** no errors in its log, "needs you" plays, `kitty-relaunch.sh --status` sees working and waiting tabs, a shortcut earns its badge, the sidebar's buttons and the short-window list work, and with the search box open its tab's row keeps the folder, `✳` and branch of the window under it. Clicking `⚙` opens the settings list over the current tab and a second click closes it. In an 860 px window and at font size 20 (both make kitty's sidebar narrower) it checks the search row stays whole, that the button columns in `sidebar.txt` are where kitty drew `⚠`, `⚙`, `+` and `×`, and clicks them. Last, it splits three tabs (nested splits with a Claude pane, a renamed tab, a zoomed tab), restarts the test kitty with `kitty-relaunch.sh` and checks every tab comes back with the same panes, folders, layout, split sizes, active pane and name (one Claude tab sits in a folder named `$HOME x`); that `--dry-run`, the log and the session file list the same panes; that resumed omp and Claude tabs keep their sidebar marks (`agents:` in `sidebar.txt`), within 1.5 s of the new kitty's first sidebar (`sidebar.txt` is watched while the restart runs; its `kitty:` line names the writer); that the new kitty doesn't hold the restart's lock; that restored shells, and the shell a resumed agent leaves when it exits, have kitty's shell integration (the last command's output reads back); and that restored plain shells are named by their folder.
+- **A hidden test kitty:** no errors in its log, "needs you" plays, `kitty-relaunch.sh --status` sees working and waiting tabs, a shortcut earns its badge, the sidebar's buttons and the short-window list work, and with the search box open its tab's row keeps the folder, `✳` and branch of the window under it. Clicking `⚙` opens the settings list over the current tab and a second click closes it. In an 860 px window and at font size 20 (both make kitty's sidebar narrower) it checks the search row stays whole, that the button columns in `sidebar.txt` are where kitty drew `⚠`, `⚙`, `+` and `×`, and clicks them. It runs `API_KEY=… npm run deploy --token=…` and a bash builtin (`KEY=… read`) in new tabs and checks the sidebar (`drawn name:` in `sidebar.txt`), the search box and `--status` show `npm run deploy` and `read`, `--dry-run` doesn't mention the secret, and no file in the state or cache folder holds the made-up secret. Last, it splits three tabs (nested splits with a Claude pane, a renamed tab, a zoomed tab), restarts the test kitty with `kitty-relaunch.sh` and checks every tab comes back with the same panes, folders, layout, split sizes, active pane and name (one Claude tab sits in a folder named `$HOME x`); that `--dry-run`, the log and the session file list the same panes; that resumed omp and Claude tabs keep their sidebar marks (`agents:` in `sidebar.txt`), within 1.5 s of the new kitty's first sidebar (`sidebar.txt` is watched while the restart runs; its `kitty:` line names the writer); that the new kitty doesn't hold the restart's lock; that restored shells, and the shell a resumed agent leaves when it exits, have kitty's shell integration (the last command's output reads back); and that restored plain shells are named by their folder.
 
 It also saves a sidebar screenshot to `/tmp/ninelives-check.png`. Run it before every commit.
 
@@ -35,6 +35,7 @@ python3 -m unittest discover -s tests -v
   - a mark still starting when its tab was first drawn appears within a second without anything else redrawing, and an idle sidebar stays idle (fake time)
   - an overlay (the search box): the row keeps the folder, mark, branch and title of the window under it, and a command under it keeps running
   - the macOS paths (class `MacOS`): `afplay` and the `.wav` sounds at the Linux level, macOS's own sounds for classic, `osascript` with the text as arguments, and the agent marks from a fake `kitty.child` (one process scan for every tab, never `/proc`)
+- **`tests/test_command_title.py`** covers `config/command_title.py`: the short form of many real command lines (chains, pipes, `VAR=value`, sudo/env/timeout, interpreters with `-m`, a script or `-c` code, here-documents, unparseable lines), that a made-up secret in any of them never shows; which titles count as the command line (bash's, zsh's, fish's, over ssh, cut short, the moment before bash reports the command, no reported command but its program running) and which stay (agents' titles, folders); the search box's names and matching (an overlay's copied title, a window title you set, the `full-commands` switch); and `kitty-relaunch.sh --status`'s lines. `tests/test_tab_bar.py`'s `CommandTitles` checks the sidebar's side: renamed tabs, overlays, the switch redrawing at once, and the fallback row.
 - **`tests/test_kitty_tabs.py`** feeds fake `kitty @ ls` output to `scripts/kitty-tabs.py`. It checks:
   - what `kitty-relaunch.sh` reopens: Claude with and without a session id, Claude started through node, omp, renamed tabs, the active tab
   - how: shells with no command (kitty's own, with shell integration), agents under `--hold`, folders with a `$` through `kitten run-shell`, an agent in its own process's folder
@@ -116,7 +117,11 @@ ffmpeg -f x11grab -framerate 16 -video_size 160x40 -i :97+0,660 -t 2.6 \
 ```
 
 `NL_TEST_SCENE=none bash scripts/test-kitty.sh start` starts the test kitty with one empty tab instead
-of one tab per status, for building a scene of your own.
+of one tab per status, for building a scene of your own. `NL_TEST_CAT_DICE=SEED` gives its cat seeded
+dice, and a move named in `state/cat-move` (`wink`, `look-left`, `tail`, …) plays at its next roll (it
+stays cued while another move plays), so a recording shows the same cat every time. That cat also
+ignores the clock: no nap from 23:00 to 06:00 (`_night` is off). Only the test kitty's copy of
+`tab_bar.py` changes.
 
 ## Recording the GIFs
 The GIFs in the README and the wiki (`docs/images/gifs/`) and the Getting started stills
@@ -137,7 +142,7 @@ the result before committing, and keep each GIF small (they are
 (`check.sh` included) is using the test kitty.
 
 ## The YouTube Short
-`tools/short/` makes the vertical Short the same way: `capture.sh` records two takes from the hidden
+`tools/short/` makes the vertical Short the same way: `capture.sh` records three takes from the hidden
 test kitty (real shortcuts pressed with `scripts/xkey.py`, states written to the fake agents, the
 restart through `test-kitty.sh relaunch`) with a meta file of captions and event times, and
 `compose_short.py` puts them together with the sounds the stubs logged, over a music bed

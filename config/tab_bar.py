@@ -34,6 +34,7 @@
 # (8 times a second) watches the tabs' states and redraws only when a frame actually changes.
 # Animations count timer ticks, not the clock, so every frame is shown once, in order.
 import os
+import random
 import re
 import subprocess
 import sys
@@ -119,7 +120,9 @@ _reminded: set = set()      # tab ids reminded (or looked at) since they started
 CAT_OFF = os.path.join(CONFIG_DIR, "cat-off")
 SLEEP_AFTER = 180.0         # nothing working or waiting this long: the cat dozes off
 _cat = {"blocked": 0, "fresh_block": False, "working": False, "done_at": -99.0, "error_at": -99.0,
-        "quiet_since": time.monotonic(), "drawn": None}
+        "quiet_since": time.monotonic(), "drawn": None,
+        "moves": {}, "roll": 0, "seen": None}   # its moves: name -> start frame (see CAT_MOVES)
+_cat_rng = random.Random()  # the cat's dice (tests seed or replace it)
 _blocked_since: dict = {}   # tab id -> time
 _running: dict = {}         # tab id -> start time of the command running in a plain terminal tab
 _since: dict = {}           # tab id -> [state, time first drawn in that state, minutes last drawn]
@@ -571,6 +574,59 @@ def _tab_name(title: str, wd: str, tab_id=None) -> str:
     return IDLE_MARK_RE.sub("", title, count=1) or title
 
 
+# A running command's title is its whole command line (kitty's shell integration), which can hold a
+# password or a token: the sidebar shows only its program and subcommand ("git push"), unless
+# kitty-commands full (the full-commands file) asks for whole command lines. The rule and how a
+# command line is told from a title a program set itself: command_title.py, next to this file.
+FULL_COMMANDS = os.path.join(CONFIG_DIR, "full-commands")
+_full = {"on": os.path.exists(FULL_COMMANDS)}
+
+
+def _load_command_title():
+    """command_title.py from this file's folder (loaded afresh on every config reload), or None."""
+    try:
+        import importlib.util
+        here = os.path.dirname(os.path.abspath(globals().get("__file__") or os.path.join(CONFIG_DIR, "tab_bar.py")))
+        spec = importlib.util.spec_from_file_location("ninelives_command_title", os.path.join(here, "command_title.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+_ct = _load_command_title()
+
+
+def _shown_title(title: str, w) -> str:
+    """The title of window w as the sidebar names the tab: a command line its shell set, cut to its
+    program and subcommand; any other title as it is (callers leave out tabs you renamed)."""
+    if not title or w is None or _full["on"] or getattr(w, "override_title", None):
+        return title or ""                     # set_window_title / launch --title: someone chose it
+    cmdline = getattr(w, "last_cmd_cmdline", "") or ""
+    try:
+        at_prompt = bool(getattr(w, "at_prompt", False))
+    except Exception:
+        at_prompt = False
+    if _ct is None:                            # command_title.py missing: the program alone
+        if cmdline and " ".join(title.split()) == " ".join(cmdline.split()):
+            return os.path.basename((title.split() or [""])[0])
+        return title
+    return _ct.shown_title(title, cmdline, at_prompt, foreground=lambda: [_foreground_name(w)])
+
+
+def _row_title(data) -> str:
+    """The tab's title for its row: kitty's, with a command line cut short (_shown_title), unless
+    you renamed the tab (Ctrl+Shift+R)."""
+    title = data.get("title") or ""
+    tab = _tab_obj(data.get("tab_id"))
+    if tab is None or getattr(tab, "name", ""):
+        return title
+    under = _covered(data.get("tab_id"))
+    w = under[1] if under is not None else getattr(tab, "active_window", None)
+    return _shown_title(title, w)
+
+
 def _tab_folder(wd: str) -> str:
     """The last two folders, with ~ for home: code/NineLives"""
     if wd == HOME or wd.startswith(HOME + "/"):
@@ -611,7 +667,11 @@ def draw_title(data) -> str:
     try:
         return _draw_title(data)
     except Exception:
-        return f" {_tab_number(data):>2}    {data.get('title') or ''}"
+        try:
+            title = _row_title(data)
+        except Exception:                      # never the raw title: it may be a command line
+            title = "" if not _full["on"] else data.get("title") or ""
+        return f" {_tab_number(data):>2}    {title}"
 
 
 def _draw_title(data) -> str:
@@ -638,7 +698,10 @@ def _draw_title(data) -> str:
                 data = dict(data, title=w.title)
         except Exception:
             pass
+    # the status reads the title kitty set (spinners), the name the shortened one
+    shown = _row_title(data)
     icon, kind, extra = _status(data)
+    data = dict(data, title=shown)
     slot = icon if _cells(icon) >= 2 else (icon + "  ")[:2]
     name = (data.get("bell_symbol") or "") + extra + _tab_name(data.get("title") or "", wd, data.get("tab_id"))
     tab_fg = fmt.fg.tab
@@ -876,6 +939,10 @@ def _tick(timer_id=None) -> None:
         if buttons_on != _buttons.get("on", buttons_on):
             animate = True
         _buttons["on"] = buttons_on
+        full = os.path.exists(FULL_COMMANDS)       # kitty-commands full/short: rename the tabs now
+        if full != _full["on"]:
+            animate = True
+        _full["on"] = full
         for wid in [w for w, t0 in _press_at.items() if now - t0 > PRESS_LIMIT]:
             _press_at.pop(wid, None)               # a release that never came: unlight the chip
             _pressed.pop(wid, None)
@@ -896,6 +963,7 @@ def _tick(timer_id=None) -> None:
         if working or blocked:
             _cat["quiet_since"] = now
         _cat.update(blocked=blocked, working=working, fresh_block=fresh)
+        _cat_react()
         if _quest_day["day"] != _day():             # a new day: a new quest under "+ New tab"
             if _quest_day["day"] is not None:
                 _write_quest_files()
@@ -1717,6 +1785,10 @@ def _note_layout(bar, data, shown_ids, hidden) -> None:
         if crow >= 0 and at in nums:
             # the current tab's folder line (agent mark, folder, branch), read back from the cells
             text += f"active: {nums[at]}\ndrawn folder: {_screen_text(bar, crow + 1).strip()}\n"
+            if not _full["on"]:
+                # and its name line (check.sh: a command shows no arguments); never with
+                # kitty-commands full, so a whole command line is never written down
+                text += f"drawn name: {_screen_text(bar, crow).strip()}\n"
         for row, glyphs in ((top.y.start if top is not None else -1, "⚠⚙+"), (crow, "×")):
             line = _screen_text(bar, row)
             for ch in glyphs:
@@ -1844,41 +1916,147 @@ AMBER, GREEN = "\x1b[33m", "\x1b[32m"
 # The cat's colour follows its mood (palette colours, so both themes work; each is at least 3.9:1 on
 # the sidebar in either theme): amber when a tab needs you (the colour of ⚠), gold for a badge, green
 # when a tab just finished, red for an error, blue while tabs work (the spinner's colour), lavender
-# asleep, and the sidebar's own colour when idle.
+# asleep. Idle, it is a ginger cat: colour 130 of the 256 (#af5f00, the same in both themes; the
+# palette has no orange), 3.3:1 on the dark sidebar and 3.6:1 on the light one.
 CAT_COLOUR = {"alert": "\x1b[33m", "badge": "\x1b[33m", "happy": "\x1b[32m", "startled": "\x1b[31m",
-              "working": "\x1b[34m", "asleep": "\x1b[35m", "idle": ""}
+              "working": "\x1b[34m", "asleep": "\x1b[35m", "idle": "\x1b[38;5;130m"}
 CAT_WIDTH = 9                # the widest face and its extras ("=-.-= zZz", "=^ω^= ♪♪♪")
+CAT_NIGHT = (23, 6)          # from 23:00 to 06:00 (local time) the idle cat sleeps
+
+# The cat moves like a small animated pet. Its face is five cells, each a channel:
+# left whisker, left eye, mouth, right eye, right whisker ("=^.^="), and its tail is the cell after
+# the gap (" ~"). A move changes some channels for a few frames (one frame = TICK, 0.125 s), on top
+# of the mood's own face, so moves overlap: a blink during a tail flick changes both. Each channel
+# is one glyph per frame; a space leaves the mood's own. A move shows only in the moods it lists
+# (a hop queued for "happy" stays hidden when a tab starts waiting), and the later entries here win
+# a channel they share (a blink closes the eyes even mid-glance). Only plain ASCII and the ω the
+# happy face already has, so every frame is single-width and crisp in DejaVu Sans Mono, and the
+# face never moves: it is always 5 cells, the extras at most CAT_WIDTH.
+_CAT_CHANNELS = {"lw": 0, "le": 1, "m": 2, "re": 3, "rw": 4}
+CAT_MOVES = {
+    #  name          moods it shows in               channel: a glyph per frame
+    "tail":        ({"idle"},                        {"tail": "~~--~~--"}),             # 1.0 s flick
+    "ear-left":    ({"idle", "working"},             {"lw": "~~  ~~  "}),               # twitch twice
+    "ear-right":   ({"idle", "working"},             {"rw": "~~  ~~  "}),
+    "look-left":   ({"idle", "working"},             {"le": "<" * 8, "re": "<" * 8}),   # =<.<=, 1 s
+    "look-right":  ({"idle", "working"},             {"le": ">" * 8, "re": ">" * 8}),   # =>.>=
+    "wink":        ({"idle", "working"},             {"re": "-" * 5, "m": "ω" * 5}),    # =^ω-=, 0.6 s
+    "surprise":    ({"alert"},                       {"lw": "~~  ", "m": "oooo", "rw": "~~  "}),  # ~OoO~
+    "flinch":      ({"startled"},                    {"lw": "~~  ~~", "rw": "~~  ~~"}),  # ~>.<~
+    "hop":         ({"happy"},                       {"le": ">>>>", "re": "<<<<"}),     # =>ω<=, 0.5 s
+    "wave":        ({"happy"},                       {"rw": "//  //  /"}),              # =^ω^/, 1.1 s
+    "cheer":       ({"badge"},                       {"lw": "\\\\  \\\\  \\", "rw": "//  //  /"}),  # \^▽^/
+    "blink":       ({"idle", "working", "happy", "badge"}, {"le": "-", "re": "-"}),  # =-.-=, 1 frame
+}
+CAT_FIDGETS = ("wink", "ear-left", "ear-right", "look-left", "look-right", "tail")
+CAT_ROLL = 8                 # frames between rolls of the dice (once a second)
+CAT_BLINK = 0.22             # chance of a blink at each roll
+CAT_FIDGET = 0.03            # chance of a fidget at each roll (when no other move plays)
 
 
-def _cat_mood() -> tuple:
-    """(mood, face) for the cat at the end of "+ New tab". Most important mood first: alert (a tab
-    needs you; "2!" = two tabs) · badge (cheering; ♛ = new rank) · happy (just finished) ·
-    startled (error) · working (watching; the tail swishes) · asleep (zZ) · idle (blinks now and
-    then)."""
-    now = time.monotonic()
+def _move_len(name: str) -> int:
+    return max(len(g) for g in CAT_MOVES[name][1].values())
+
+
+def _cat_start(name: str, delay: int = 0) -> None:
+    _cat["moves"][name] = _frame + delay
+
+
+def _cat_react() -> None:
+    """Called by the timer: start the cat's moves. A reaction to what just happened (a tab starts
+    waiting: surprise; one finished: a hop, then a wave; a badge: a cheer; an error: a flinch), or,
+    once a second, a roll of the dice: often a blink, now and then a fidget. Never while a tab
+    waits (that stare holds still, however long the wait), asleep or hidden. The face itself (_cat_mood) only reads what this left, so drawing it twice gives the
+    same frame, and nothing is redrawn between moves."""
+    try:
+        seen = (_cat["blocked"], _cat["done_at"], _cat["error_at"], _badge_shown.get("until", 0.0))
+        before = _cat["seen"]
+        _cat["seen"] = seen
+        moves = _cat["moves"]
+        for name in [n for n, start in moves.items() if _frame - start >= _move_len(n)]:
+            del moves[name]                       # finished
+        if before is not None:                    # (the first look after loading reacts to nothing)
+            if seen[0] > before[0]:
+                _cat_start("surprise")
+            if seen[1] != before[1]:
+                _cat_start("hop")
+                _cat_start("wave", _move_len("hop"))
+            if seen[2] != before[2]:
+                _cat_start("flinch")
+            if seen[3] > before[3]:
+                _cat_start("cheer")
+        if _frame < _cat["roll"]:
+            return
+        _cat["roll"] = _frame + CAT_ROLL
+        mood = _cat_base(time.monotonic())[0]
+        if mood not in CAT_MOVES["blink"][0] or os.path.exists(CAT_OFF):
+            return                                # (alert, startled, asleep: no dice)
+        r = _cat_rng.random()
+        if r < CAT_BLINK:
+            _cat_start("blink")
+        elif r < CAT_BLINK + CAT_FIDGET and not moves:
+            pool = [n for n in CAT_FIDGETS if mood in CAT_MOVES[n][0]]
+            if pool:
+                _cat_start(_cat_rng.choice(pool))
+    except Exception:
+        pass
+
+
+def _night() -> bool:
+    h = time.localtime().tm_hour
+    return h >= CAT_NIGHT[0] or h < CAT_NIGHT[1]
+
+
+def _cat_base(now: float) -> tuple:
+    """(mood, face, extras) before any move: the face is 5 cells, the extras (its tail, notes, the
+    "!") follow it. Most important mood first: alert (a tab needs you; "2!" = two tabs) · badge
+    (cheering; ♛ = new rank) · happy (just finished) · startled (error) · working (watching; the
+    tail swishes) · asleep (zZ; at night as soon as nothing works or waits) · idle."""
     if _cat["blocked"]:                # status first: a waiting tab beats any celebration
         n = _cat["blocked"]
         bang = (str(n) if n > 1 else "") + "!"
         if _cat["fresh_block"] and (_frame // 4) % 2:
             bang = " " * len(bang)
-        return "alert", f"=O.O= {bang}"
+        return "alert", "=O.O=", f" {bang}"
     if _badge_shown["until"] > now:
         crown = "♛" if _badge_shown.get("rank") else ""
-        return "badge", f"=^▽^={crown}{TWINKLE[_frame % len(TWINKLE)]}"
+        return "badge", "=^▽^=", f"{crown}{TWINKLE[_frame % len(TWINKLE)]}"
     if now - _cat["done_at"] < 4:
         # one note per tab in the current run of finishes (the streak), up to three
         notes = min(3, _streak["step"]) if now - _streak["at"] < 4 else 1
-        return "happy", f"=^ω^= {'♪' * max(1, notes)}"
+        return "happy", "=^ω^=", f" {'♪' * max(1, notes)}"
     if now - _cat["error_at"] < 4:
-        return "startled", "=>.<= "
+        return "startled", "=>.<=", " "
     if _cat["working"]:
-        return "working", "=^.^= " + "~-"[(_frame // 4) % 2]
+        return "working", "=^.^=", " " + "~-"[(_frame // 4) % 2]
     quiet = now - _cat["quiet_since"]
+    if _night():
+        quiet += SLEEP_AFTER           # at night it dozes off as soon as nothing works or waits
     if quiet >= SLEEP_AFTER:
         if quiet >= SLEEP_AFTER + 60:
-            return "asleep", "=-.-= zZ"            # fully asleep: no more redraws
-        return "asleep", "=-.-= " + ("z", "zz", "zZ", "zZz")[(_frame // 12) % 4]
-    return "idle", "=-.-=" if _frame % 48 == 0 else "=^.^="
+            return "asleep", "=-.-=", " zZ"         # fully asleep: no more redraws
+        return "asleep", "=-.-=", " " + ("z", "zz", "zZ", "zZz")[(_frame // 12) % 4]
+    return "idle", "=^.^=", ""
+
+
+def _cat_mood() -> tuple:
+    """(mood, face) for the cat at the end of "+ New tab": the mood's face (_cat_base) with the
+    moves playing now (CAT_MOVES) on top. Reads only, so the timer and the draw agree."""
+    mood, face, extras = _cat_base(time.monotonic())
+    cells = list(face)
+    moves = _cat["moves"]
+    for name, (moods, channels) in CAT_MOVES.items():
+        start = moves.get(name)
+        if start is None or mood not in moods:
+            continue
+        i = _frame - start
+        for ch, glyphs in channels.items():
+            if 0 <= i < len(glyphs) and glyphs[i] != " ":
+                if ch == "tail":
+                    extras = " " + glyphs[i]
+                else:
+                    cells[_CAT_CHANNELS[ch]] = glyphs[i]
+    return mood, "".join(cells) + extras
 
 
 def _cat_face() -> str:

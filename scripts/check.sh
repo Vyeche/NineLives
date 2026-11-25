@@ -21,7 +21,7 @@ skip() { printf '  \e[2mskip  %s\e[0m\n' "$1"; }
 echo "Syntax"
 if out="$(PYTHONDONTWRITEBYTECODE=1 python3 - <<'EOF' 2>&1
 import ast, sys
-for f in ("config/tab_bar.py", "config/tab-finder.py", "config/settings.py", "scripts/make-sounds.py", "scripts/vmouse.py", "tests/live_agent_lookup.py"):
+for f in ("config/tab_bar.py", "config/tab-finder.py", "config/settings.py", "config/command_title.py", "scripts/make-sounds.py", "scripts/vmouse.py", "tests/live_agent_lookup.py"):
     ast.parse(open(f, encoding="utf-8").read(), f)
 EOF
 )"; then ok "python parses"; else fail "python: $out"; fi
@@ -209,6 +209,35 @@ print(" ".join(str(i + 1) for i, t in enumerate(json.load(sys.stdin)[0]["tabs"])
     bash scripts/test-kitty.sh k set-font-size 20 >/dev/null 2>&1; sleep 1.5
     sidebar_buttons "font size 20"
     bash scripts/test-kitty.sh k set-font-size 0 >/dev/null 2>&1; sleep 1
+    # A running command's tab is named after its program and subcommand, never its arguments (they
+    # can hold a password): in the sidebar, the search box and relaunch --status, and nothing on
+    # disk holds them. The second tab runs a bash builtin: its title comes a moment before bash
+    # reports the command. Both tabs are closed again (the relaunch below counts tabs).
+    pm="zq7PRIVzq"; drawn_name() { sed -n 's/^drawn name: //p' "$NL_TEST_DIR/state/sidebar.txt" 2>/dev/null; }
+    w1="$(bash scripts/test-kitty.sh k launch --type=tab --cwd "$NL_TEST_DIR/code/api" bash --norc 2>/dev/null)"; sleep 0.5
+    bash scripts/test-kitty.sh k send-text --match "id:$w1" "API_KEY=$pm npm run deploy --token=$pm"$'\n' >/dev/null 2>&1
+    bash scripts/test-kitty.sh k focus-window --match "id:$w1" >/dev/null 2>&1; sleep 1.5
+    n1="$(drawn_name)"
+    found="$(bash scripts/test-kitty.sh k ls 2>/dev/null | KITTY_CONFIG_DIRECTORY="$NL_TEST_DIR/home/.config/kitty" python3 -c 'import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("tf", "config/tab-finder.py"); tf = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tf)
+rows = tf.rows(json.load(sys.stdin))
+print(" | ".join(r["name"] for r in rows if "deploy" in r["name"]), len(tf.matches(rows, sys.argv[1])))' "$pm")"
+    st="$(NL_KITTY_SOCKET=unix:@ninelives-test-kitty bash scripts/kitty-relaunch.sh --status 2>&1)"
+    w2="$(bash scripts/test-kitty.sh k launch --type=tab --cwd "$NL_TEST_DIR/code/api" bash --norc 2>/dev/null)"; sleep 0.5
+    bash scripts/test-kitty.sh k send-text --match "id:$w2" "KEY=$pm read -t 20 v"$'\n' >/dev/null 2>&1
+    bash scripts/test-kitty.sh k focus-window --match "id:$w2" >/dev/null 2>&1; sleep 1.5
+    n2="$(drawn_name)"
+    dry0="$(bash scripts/test-kitty.sh relaunch --dry-run 2>&1)"   # kitty's own save holds the command: deleted
+    leak="$(grep -rl -- "$pm" "$NL_TEST_DIR/state" "$NL_TEST_DIR/home/.cache" 2>/dev/null | tr '\n' ' ')"
+    bash scripts/test-kitty.sh k close-window --match "id:$w1" >/dev/null 2>&1
+    bash scripts/test-kitty.sh k close-window --match "id:$w2" >/dev/null 2>&1; sleep 0.5
+    bash scripts/test-kitty.sh k focus-tab --match index:0 >/dev/null 2>&1; sleep 0.5
+    hide() { sed "s/$pm/<secret>/g" <<< "$1" | tr '\n' ' '; }
+    if [[ "$n1" == *" npm run deploy "* ]] && [[ "$n2" == *" read "* ]] && [ "$found" = "npm run deploy 0" ] \
+        && grep -q "npm run deploy$" <<< "$st" && [[ "$n1$n2$found$st$dry0" != *"$pm"* ]] && [ -z "$leak" ]; then
+      ok "a command's tab shows 'npm run deploy' and 'read', never their arguments (sidebar, search, --status, --dry-run, files)"
+    else fail "command names: sidebar '$(hide "$n1")' / '$(hide "$n2")', search '$(hide "$found")', --status '$(hide "$st")', --dry-run has it: $([[ "$dry0" == *"$pm"* ]] && echo yes || echo no), files with it: '$leak'"; fi
     # Last (it replaces the test kitty): kitty-relaunch.sh brings split tabs back. Tab 1 split
     # left | right with the right half split top / bottom (a Claude pane at the bottom, sizes not
     # even), the renamed tab 10 split top / bottom with the bottom split left | right, tab 11 split

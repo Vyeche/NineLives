@@ -66,6 +66,7 @@ written atomically to `~/.local/state/ninelives/`.
 | `config/ninelives-macos.conf` | read only by kitty on macOS: the socket in `$TMPDIR`, Ctrl+Alt+M with `afplay` |
 | `config/cosmic-*.conf`, `*-theme.auto.conf` | colours; kitty picks an auto file by the desktop's light/dark setting |
 | `config/shortcuts.sh` | the F1 sheet (wraps to the window) |
+| `config/command_title.py` | which titles are a running command's command line (compared with the command the shell reported to kitty, `last_cmd_cmdline`) and their short form (`git push`); `tab_bar.py`, `tab-finder.py` and `scripts/kitty-tabs.py` all use it, and `full-commands` turns it off |
 | `config/tab-finder.py` | the tab search box (Ctrl+Shift+Space) and the jump to the waiting tab (Ctrl+Alt+U) |
 | `config/settings.py` | the settings list (Ctrl+Shift+F2, the sidebar's ⚙, `ninelives settings`): one row per setting, written to the same switch files the `kitty-*` commands use |
 | `config/tips.sh` | prompt tips and the `kitty-*` commands |

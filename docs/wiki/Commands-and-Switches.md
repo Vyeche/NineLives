@@ -17,6 +17,7 @@ NineLives' settings as a list over the current tab, one row per setting with its
    The cat                         shown
    Quests                     on · ★3/16
    Sidebar buttons                 shown
+   Full commands in tab names        off
    Prompt tips                        on
 
    Edit kitty.conf in your editor…
@@ -30,7 +31,7 @@ reloads it). Pressing Ctrl+Shift+F2 (or ⚙) again closes the list.
 
 ## At a glance
 `ninelives` prints them all at once: sounds (on/muted, volume, which set), the cat, quests (badges,
-rank, next quest) and tips, each with the command that changes it. It also warns when kitty is still
+rank, next quest), the buttons, how commands are named and tips, each with the command that changes it. It also warns when kitty is still
 running an older `tab_bar.py` than the installed one, which means a restart is due.
 
 ## The commands
@@ -45,6 +46,7 @@ running an older `tab_bar.py` than the installed one, which means a restart is d
 | `kitty-sounds classic` / `ninelives` | desktop sounds / NineLives sounds | `sounds-classic` |
 | `kitty-buttons` / `off` / `on` | explain / hide / show the sidebar's search field and buttons and the × on the current tab | `buttons-off` |
 | `kitty-cat` / `off` / `on` | explain / hide / show the cat | `cat-off` |
+| `kitty-commands` / `full` / `short` | explain / whole command lines / program and subcommand only, in tab names (see [The sidebar](The-Sidebar#commands-in-tab-names)) | `full-commands` (there: whole lines) |
 | `kitty-quests` / `off` / `on` | list / hide / show quests | `quests-off` |
 | `kitty-tips` / `all` / `off` / `on` | one tip / every tip / prompt tips off / on | `tips-off` |
 

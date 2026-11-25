@@ -5,7 +5,10 @@
 NineLives is a kitty configuration. Everything runs locally, as you, on your own machine:
 
 - **Inside kitty:** `config/kitty.conf` and `config/tab_bar.py`, which kitty loads as Python into its
-  own process to draw the sidebar. It reads tab titles, folders and program status from kitty, writes
+  own process to draw the sidebar. It reads tab titles, folders and program status from kitty (and,
+  to tell a running command's title from other titles, the command line your shell reported to
+  kitty; a command's tab shows only its program and subcommand, unless you turn on
+  `kitty-commands full`; NineLives' own files never hold a plain command's arguments), writes
   quest progress to `~/.local/state/ninelives/`, plays sounds with `paplay` and sends notifications
   over the local D-Bus session bus (`gdbus`); on macOS with `afplay` and `osascript` (the
   notification's text is passed to `osascript` as arguments, never as part of its script).
@@ -26,7 +29,11 @@ the GitHub Actions workflow that tests it.
 Realistic problems we want to hear about:
 - A crafted **tab title, folder name or command line** (for example from a repository you cloned, or
   a program that sets its own title) that makes `kitty-relaunch.sh` write a session file that runs
-  something you didn't run before, or makes the sidebar or the tab search misbehave.
+  something you didn't run before, or makes the sidebar or the tab search misbehave, or a command
+  line whose arguments (a password, a token) still show up in the sidebar, the tab search,
+  `kitty-relaunch.sh --status` or a NineLives file with `kitty-commands full` off. (kitty's own
+  window title, its "command finished" notification and the session file it saves hold whole
+  command lines; `kitty-relaunch.sh` deletes kitty's save as soon as it has read its layouts.)
 - A file in the **state or cache folders** (`~/.local/state/ninelives/`, `~/.cache/ninelives/`)
   that makes NineLives run code or overwrite something outside them.
 - `install.sh` or `uninstall.sh` **deleting or overwriting a file** that isn't NineLives' own or

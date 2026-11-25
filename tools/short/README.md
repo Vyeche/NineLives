@@ -2,8 +2,9 @@
 
 A vertical (1080x1920) Short of NineLives: captions on top, the kitty window in the middle at 1:1
 (1080x384, font size 14 so it reads on a phone), and below it a close-up that follows what happens:
-the whole sidebar with its pixels doubled (the cat sits at the end of **+ New tab**), and the search
-box while it's open (from its prompt to the folder column, so about 1.3x). Recorded live from the real program in the hidden test kitty, with the
+the whole sidebar with its pixels doubled (the cat sits at the end of **+ New tab**), the last two tabs
+and the cat at 3x while the cat reacts, and the search box or the settings list while it's open (about
+1.3x). Recorded live from the real program in the hidden test kitty, with the
 real shortcuts pressed and NineLives' own sounds mixed in where they played, over an original music
 bed made with the same synth as the sounds.
 
@@ -11,13 +12,13 @@ Two steps, both re-runnable:
 
 | Step | What | Writes |
 | --- | --- | --- |
-| `capture.sh WORK_DIR [take1 take2]` | starts the hidden test kitty (`scripts/test-kitty.sh`: display `:97`, its own socket, stubbed sounds), builds each take's made-up tabs with `scripts/record.sh`'s helpers, presses the shortcuts with `scripts/xkey.py`, and records the display losslessly. Exits non-zero if a take needs doing again (see the restart below) | per take: `NAME.mkv`, `NAME.meta.json` (captions, keys, state changes, close-up boxes and the stub-logged sounds, all in seconds since the first frame, and the sidebar's cell grid), `NAME.stub.log`, `NAME.text.txt` (every window's text, for the privacy check) |
+| `capture.sh WORK_DIR [take1 take2 take3]` | starts the hidden test kitty (`scripts/test-kitty.sh`: display `:97`, its own socket, stubbed sounds), builds each take's made-up tabs with `scripts/record.sh`'s helpers, presses the shortcuts with `scripts/xkey.py`, and records the display losslessly. Exits non-zero if a take needs doing again (see the restart below) | per take: `NAME.mkv`, `NAME.meta.json` (captions, keys, state changes, close-up boxes and the stub-logged sounds, all in seconds since the first frame, and the sidebar's cell grid), `NAME.stub.log`, `NAME.text.txt` (every window's text, for the privacy check) |
 | `compose_short.py WORK_DIR OUT.mp4 [--thumb PNG] [--no-music]` | cuts the takes together, draws captions, keycaps, the close-up and an end card, holds a dimmed frame over the restart's black, mixes the sounds over the music bed (`music.py`) and encodes | the MP4 (H.264 + AAC, 30 fps), a thumbnail, and in `WORK_DIR` the mix and its stems (`stem-sounds.wav`, `stem-music.wav`) |
 
 ```bash
 W="$HOME/Videos/ninelives-short/work"              # anywhere outside the repo
-bash tools/short/capture.sh "$W"                   # about a minute; take1 and take2 (or name one)
-python3 tools/short/compose_short.py "$W" --preview 5 18 35      # a few frames as PNGs in $W
+bash tools/short/capture.sh "$W"                   # about a minute and a half; take1-3 (or name some)
+python3 tools/short/compose_short.py "$W" --preview 4 24 43      # a few frames as PNGs in $W
 python3 tools/short/compose_short.py "$W" "$W/../ninelives_short.mp4" \
     --thumb "$W/../ninelives_short_thumb.png"
 ```
@@ -26,9 +27,11 @@ Needs Xvfb, kitty, ffmpeg (libx264), numpy and pycairo (`python3-cairo`). Fonts:
 DejaVu Sans Mono.
 
 ## The story
-- **take1** (a fresh test kitty): four sessions at work (Claude ✳, omp π). One finishes (sparkle, ✓,
-  `=^ω^= ♪`, `done.oga`), one needs you (amber pulse, `=O.O= !`, `⚠1`, `needs-you.oga`), Ctrl+Alt+U
-  goes there, Ctrl+Shift+Space finds a tab (typing narrows it, Tab cycles the filters, Enter goes).
+- **take1** (a fresh test kitty): four sessions at work (Claude ✳, omp π). The close-up moves to the
+  last two tabs and the cat (3x): one finishes (sparkle, ✓, the cat hops and waves, `=>ω<= ♪`,
+  `=^ω^/`, `done.oga`), the other needs you (amber pulse, `~OoO~` then `=O.O= !`, `⚠1`,
+  `needs-you.oga`). Ctrl+Alt+U goes there, Ctrl+Shift+Space finds a tab (typing narrows it, Tab
+  cycles the filters, Enter goes).
 - **take2** (another fresh kitty, so the done streak starts at one, in the light theme): three tabs
   finish in a row (`done`, `done-2`, `done-3`; ♪ ♪♪ ♪♪♪), then `test-kitty.sh relaunch` restarts it
   and every tab and split comes back, the resumed Claude tabs with their `✳` marks. The take checks
@@ -38,16 +41,26 @@ DejaVu Sans Mono.
   (`capture.sh "$W" take2`). (A mark looked up while the agent was still starting used to stay off
   until the sidebar's next redraw, seconds later; since 2026-11-23 the sidebar looks again within
   half a second, so this guard should no longer fire.)
+- **take3** (dark again, nothing working): the ginger idle cat up close winks (`=^ω-=`), blinks and
+  glances (`=<.<=`); `npm run deploy --customer=acme-demo` typed in a shell names its tab only
+  `npm run deploy`; Ctrl+Shift+F2 opens the settings list, the volume goes to 95 % and back (a chime
+  at each level, `done.oga`), and The cat is hidden and shown again while the close-up watches it.
 - an end card with the cat and the GitHub link.
+
+The cat's idle moves are dice rolls. capture.sh sets `NL_TEST_CAT_DICE` (see `scripts/test-kitty.sh`):
+the test kitty's copy of `tab_bar.py` gets seeded dice, and `cat_move wink` makes the cat play that
+move at its next roll (within a second; it waits while another move plays), so a take shows the
+same moves every time. The test kitty's cat also ignores the clock: it doesn't nap from 23:00 to
+06:00, so a take recorded at night still shows its idle moves.
 
 Captions are written in `capture.sh` (`beat "First line|second line" "Ctrl+Alt+U"`), next to the
 actions they describe, and so are the close-up's boxes (`focus X Y WIDTH HEIGHT`, worked out from the
-sidebar's cell grid in `sidebar.txt` by `sidebar_box N` and `search_box`, so they follow the font
-size). The cut (`EDIT`), layout and colours are at the top of `compose_short.py`.
+sidebar's cell grid in `sidebar.txt` by `sidebar_box N`, `cat_box N`, `search_box` and `settings_box`,
+so they follow the font size; `focus X Y W H 3` lets a box show at 3x). The cut (`EDIT`), layout and colours are at the top of `compose_short.py`.
 
 ## The close-up and the restart
-- A box shows as big as fits under the window: 2x at most (every pixel doubled, crisp), less for a
-  wide one (smooth scaling); centred, or moved left so it stays clear of YouTube's buttons (x ≤ 952)
+- A box shows as big as fits under the window: 2x at most unless the box asks for more (the cat's,
+  3x), every pixel repeated at a whole-number zoom (crisp), smoothly scaled otherwise (a wide box); centred, or moved left so it stays clear of YouTube's buttons (x ≤ 952)
   and above its title (y ≤ 1536). With font 14 the sidebar with four tabs is 341x360 px, so 2x fills
   the space (y 800-1520); the search box (706x348) shows at about 1.3x, prompt, filters and folder column whole.
   It eases 0.45 s from one box to the next.
@@ -65,7 +78,7 @@ size). The cut (`EDIT`), layout and colours are at the top of `compose_short.py`
   first frame in `NAME.meta.json`. A state change shows on screen within about two frames of its log
   line, and its sound is logged about 0.1 s later.
 - Audio: each sound scaled by the `--volume` NineLives passed to `paplay` (taken as a linear factor
-  out of 65536; every sound in the story uses the same value), then one static gain for the whole mix
+  out of 65536; the same for every sound but take3's 95 % chime), then one static gain for the whole mix
   (sounds and music) to -14 LUFS. A limiter is added only if that would push the true peak over -1.5 dBTP (the chimes'
   levels against each other stay as they are). The finished MP4 is measured again and printed.
 - Music (`music.py`): original, synthesized in Python with `scripts/make-sounds.py`'s own timbres

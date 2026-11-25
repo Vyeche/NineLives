@@ -95,7 +95,12 @@ kls() { "$NEW" @ --to "$SOCK" ls 2>/dev/null; }
 kls >/dev/null || { echo "$(date +%T) the kitty at $SOCK doesn't answer (closed?)"; exit 1; }
 busy() { kls | python3 "$TABS_PY" busy; }           # one line per busy tab; nothing when all idle
 SESSION="$(dirname "$LOG")/kitty-relaunch.kitty-session"   # what the new kitty opens
-SAVED="$(dirname "$LOG")/kitty-relaunch-saved.kitty-session"   # kitty's own save, for zoomed splits
+# kitty's own save, for zoomed splits; each run has its own (a --dry-run beside a restart can't delete
+# the restart's), named by this shell's PID
+SAVED="$(dirname "$LOG")/kitty-relaunch-saved-$$.kitty-session"
+# (kitty writes the command running in each window into that save, arguments and all: it is removed
+# as soon as its layouts are read, and when this run ends whichever way)
+trap 'rm -f "$SAVED"' EXIT
 
 # The detached copy of this script knows itself by a one-time token (in the environment and in a
 # file it deletes at once). A plain _KR_DETACHED=1 leaked into the new kitty and every tab in it, so
@@ -163,7 +168,7 @@ save_layouts() {
   for _ in $(seq 1 10); do [ -s "$SAVED" ] && break; sleep 0.2; done
 }
 
-if [ "$MODE" = --dry-run ]; then save_layouts; kls | python3 "$TABS_PY" show "$SAVED"; exit 0; fi
+if [ "$MODE" = --dry-run ]; then save_layouts; kls | python3 "$TABS_PY" show "$SAVED"; rm -f "$SAVED"; exit 0; fi
 if [ "$MODE" = --status ]; then
   b="$(busy)"
   if [ -n "$b" ]; then echo "--when-idle would wait for:"; printf '%s\n' "$b"; else echo "All tabs idle: --when-idle would restart now."; fi
@@ -190,7 +195,9 @@ fi
 save_layouts
 DATA="$(kls)"
 NL_KITTEN="$KITTEN" python3 "$TABS_PY" session "$SAVED" <<< "$DATA" > "$SESSION.tmp" && [ -s "$SESSION.tmp" ] \
-  || { echo "$(date +%T) FAILED: could not work out what to reopen; kitty left running"; exit 1; }
+  || { rm -f "$SAVED"; echo "$(date +%T) FAILED: could not work out what to reopen; kitty left running"; exit 1; }
+WHAT="$(python3 "$TABS_PY" show "$SAVED" <<< "$DATA")"
+rm -f "$SAVED"
 # Let the new kitty's own parser read the file first: a session it can't read opens just an error
 # window, and every tab would be gone. (A kitty whose internals differ skips this check.)
 if ! why="$("$NEW" +runpy 'import sys
@@ -210,7 +217,6 @@ except Exception:
   echo "$(date +%T) FAILED: kitty can't read the session file ($why); kitty left running"; exit 1
 fi
 mv "$SESSION.tmp" "$SESSION"
-WHAT="$(python3 "$TABS_PY" show "$SAVED" <<< "$DATA")"
 echo "$(date +%T) reopening $(grep -c '^new_tab' "$SESSION") tabs ($(grep -c '^launch' "$SESSION") windows):"
 printf '%s\n' "$WHAT"                                       # log exactly what will be reopened
 # kitty's pid: up from a window's process to kitty (not just its parent: under launch --hold a
