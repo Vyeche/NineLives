@@ -21,7 +21,7 @@ import zlib
 FUR, FUR_DARK, BELLY = (0.95, 0.63, 0.31), (0.80, 0.45, 0.18), (1.0, 0.89, 0.76)
 LINE, PINK, EYE = (0.24, 0.22, 0.27), (0.96, 0.55, 0.62), (0.20, 0.18, 0.22)
 SLEEPY_Z = (0.60, 0.50, 0.76)            # lavender, like the sidebar cat asleep: reads on both themes
-SIZES = (96, 192)                        # px; the helper picks the one nearest its box, kitty scales
+SIZES = (96, 192, 384)                   # px; the helper shows the smallest at least as big as its box
 OUT_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "cat"))
 UNITS = 114                              # the drawing's square: the cat is 100 tall, room for a hop
 

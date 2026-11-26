@@ -59,17 +59,18 @@ the current tab, drawn, with a speech bubble. It says what needs you first, then
 
 | It says | When | Enter |
 | --- | --- | --- |
-| *Tab 7 "Migrate database schema to v2" is waiting for you. Go there?* | a tab waits for you (*Two tabs are waiting…* for more) | goes there (like Ctrl+Alt+U) |
+| *Tab 7 "Migrate database schema to v2" is waiting for you. Go there?* | a tab waits for you (*Two tabs are waiting…* for more; the one that started waiting last is named first) | opens the tab named in the bubble |
 | *Tab 8 "Deploy to staging" stopped with an error. Go there?* | a tab failed | goes there |
 | *Two tabs finished: tab 6 "Write release notes" and 9. Go to tab 6?* | tabs finished and you haven't looked yet | goes to the first |
 | *Good afternoon! It's Thursday, November 26. Nothing needs you right now. Two tabs are working.* | nothing waits, failed or finished | the next line |
 | *You earned the Zoom Lens badge today: ★ 5 of 16, rank House Cat.* | you earned a badge today | the F1 sheet |
 | *Ctrl+Alt+Z zooms one pane to full size (again to go back). Use it once to earn the Zoom Lens badge.* | today's quest | the F1 sheet |
-| a **tip**, a **joke** and a **word of the day** | always, last | the next line |
+| a **tip**, a **joke** and a **word of the day** | last, each while there is one you haven't dismissed | the next line |
 
 The tip comes from the same pool as the tips under your shell prompt; the joke and the word (a
 terminal word explained plainly, like *socket* or *scrollback*) are the cat's own. Each is picked by the
-date, so it stays the same all day and changes tomorrow.
+date, so it stays the same all day and moves on to the next one tomorrow, round all the ones you haven't
+dismissed. Dismiss every tip (or joke, or word) with **d** and that card no longer shows.
 
 | Key | Does |
 | --- | --- |
@@ -80,6 +81,8 @@ date, so it stays the same all day and changes tomorrow.
 | **Esc**, **q** | close (so does Ctrl+Alt+C or a click on the sidebar's cat) |
 
 The buttons in the bubble work with a click, and clicking the drawn cat gets the next line (it winks).
+In a narrow bubble the buttons take shorter words (`Close ×` becomes `×`, then `Go ↵`, `Shortcuts ↵`,
+`›`), so none of them drops off; in a very short window the text gets shorter and the buttons stay.
 
 While it's open it keeps an eye on your tabs (once a second): a tab that starts waiting makes it jump
 (and the bubble switches to it), a finished one makes it hop and wave. In between it blinks and now and
@@ -88,8 +91,11 @@ dozes when nothing needs you. It makes no sound (the tabs' own sounds already te
 appears when you ask: it never pops up by itself.
 
 The drawing is shown with kitty's graphics protocol, from small pictures that come with NineLives
-(`cat/`, 15 poses in two sizes, built by `scripts/make-cat.py`), so nothing extra needs installing.
-In a narrow window the cat sits above its bubble, and in a very small one the bubble shows alone.
+(`cat/`, 15 poses in three sizes, 96, 192 and 384 px, built by `scripts/make-cat.py`), so nothing extra
+needs installing. The helper shows the smallest that is at least as big as the cat on screen, so kitty
+only ever scales it down and it stays sharp with big text or on a 2× screen. The bubble's tail points
+at the cat: from its left side when the cat sits beside it; in a narrow window the cat sits above its
+bubble and the tail comes up from the bubble's top; in a very small one the bubble shows alone.
 `kitty-cat off` hides the sidebar's cat, so there is nothing to click; Ctrl+Alt+C still calls it.
 
 ```bash

@@ -80,7 +80,7 @@ while IFS= read -r b; do
   [ -n "$b" ] || continue
   echo "  keep    ${b#"$DEST"/}   (an older .wav install.sh replaced: delete it if you don't need it)"; kept=$((kept + 1))
 done < <(find "$DEST/sounds" -maxdepth 1 -type f -name '*.wav.bak-[0-9]*' 2>/dev/null | sort)
-[ "$DRY" = 1 ] || { rmdir "$DEST/cat/96" "$DEST/cat/192" "$DEST/sounds" 2>/dev/null; rmdir "$DEST/cat" 2>/dev/null; } || true
+[ "$DRY" = 1 ] || { rmdir "$DEST/cat/96" "$DEST/cat/192" "$DEST/cat/384" "$DEST/sounds" 2>/dev/null; rmdir "$DEST/cat" 2>/dev/null; } || true
 
 if [ "$DRY" = 1 ]; then
   echo "Dry run: $removed file(s) would be removed, $restored put back from a backup, $kept kept. Nothing was touched."

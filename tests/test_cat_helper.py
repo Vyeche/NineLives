@@ -53,6 +53,7 @@ class Dice:
 class HelperCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.conf = os.path.join(self.tmp.name, "kitty")
         self.state = os.path.join(self.tmp.name, "state")
         os.makedirs(self.conf)
@@ -61,12 +62,9 @@ class HelperCase(unittest.TestCase):
         env.update(HOME=self.tmp.name, KITTY_CONFIG_DIRECTORY=self.conf, NINELIVES_STATE=self.state)
         self.env = mock.patch.dict(os.environ, env, clear=True)
         self.env.start()
+        self.addCleanup(self.env.stop)                  # (registered at once: a failing load() can't leak)
         self.h = load(HELPER, "nl_cat_helper")
         self.pool = ["tip one", "tip two", "tip three", "tip four"]
-
-    def tearDown(self):
-        self.env.stop()
-        self.tmp.cleanup()
 
     def say(self, tabs=(), now=NOON):
         return self.h.suggestions(list(tabs), now, self.state, self.conf, self.h.load_hidden(self.state), self.pool)
@@ -216,7 +214,7 @@ class Pictures(HelperCase):
                     head = f.read(32)
                 self.assertEqual(head[:8], b"\x89PNG\r\n\x1a\n", path)
                 self.assertEqual(struct.unpack(">II", head[16:24]), (size, size), path)
-                self.assertLess(os.path.getsize(path), 8000, path)
+                self.assertLess(os.path.getsize(path), 8000 if size <= 192 else 16000, path)
         ids = {self.h.image_id(f, s) for f in self.h.FRAMES for s in self.h.SIZES}
         self.assertEqual(len(ids), len(self.h.FRAMES) * len(self.h.SIZES))
 
@@ -233,22 +231,23 @@ class Pictures(HelperCase):
         h.draw()
         first = out.getvalue()
         self.assertNotIn("\x1b[2J", first)               # it would free the frames kitty keeps
-        self.assertIn(f"a=t,f=100,i={self.h.image_id('idle', 192)},q=2", first)
-        self.assertIn(f"a=p,i={self.h.image_id('idle', 192)},p=7,r=10,C=1,q=2", first)
+        self.assertEqual(h.lay["size"], 384)             # 10 rows of 20 px: the 384 px frames, scaled down
+        self.assertIn(f"a=t,f=100,i={self.h.image_id('idle', 384)},q=2", first)
+        self.assertIn(f"a=p,i={self.h.image_id('idle', 384)},p=7,r=10,C=1,q=2", first)
         out.truncate(0); out.seek(0)
         h.draw_cat()
         self.assertEqual(out.getvalue(), "")             # nothing changed: nothing written
         h.play("blink")
         h.draw_cat()
         blink = out.getvalue()
-        self.assertLess(blink.index("a=p,i=" + str(self.h.image_id("blink", 192))),
-                        blink.index(f"a=d,d=i,i={self.h.image_id('idle', 192)}"))   # new, then old off
+        self.assertLess(blink.index("a=p,i=" + str(self.h.image_id("blink", 384))),
+                        blink.index(f"a=d,d=i,i={self.h.image_id('idle', 384)}"))   # new, then old off
         h.step()
         out.truncate(0); out.seek(0)
         h.draw_cat()
         back = out.getvalue()
         self.assertNotIn("a=t", back)                    # idle was sent before: only placed again
-        self.assertIn(f"a=p,i={self.h.image_id('idle', 192)}", back)
+        self.assertIn(f"a=p,i={self.h.image_id('idle', 384)}", back)
 
     def test_without_its_frames_the_bubble_shows_alone(self):
         out = io.StringIO()
@@ -371,6 +370,202 @@ class Layout(HelperCase):
         self.assertEqual(modes, {"side", "stacked", "alone"})
 
 
+class Polish(HelperCase):
+    """The bubble's tail, the frames' size, the buttons in a narrow bubble, where clicks land."""
+    def items(self, *more):
+        return self.h.suggestions([tab(1, active=True), tab(7, "blocked", "API"), *more], NOON, self.state,
+                                  self.conf, set(), ["a tip"])
+
+    def test_the_tail_joins_the_bubble_and_points_at_the_cat(self):
+        h = self.h
+        items = self.items()
+        # beside the cat: ╶─┤ on the bubble's left border, at the cat's cheek
+        lay = h.layout(77, 37, 10, 20)
+        canvas, cat, _ = h.screen(items, 0, 77, 37, lay)
+        rows = [y for y, t in canvas.items() if "╶─┤" in plain(t)]
+        self.assertEqual(len(rows), 1)
+        left, top, crows, ccols = cat
+        self.assertTrue(top + crows // 4 <= rows[0] <= top + crows * 3 // 4, (rows, cat))
+        x = plain(canvas[rows[0]]).index("╶─┤")
+        self.assertEqual(x + 3, lay["bubble_col"])         # ┤ (1-based x + 3) is the bubble's left border
+        self.assertNotIn("◂", "".join(map(plain, canvas.values())))
+        # the cat above: ╷ under it, on the top border's ┴
+        lay = h.layout(40, 37, 10, 20)
+        self.assertEqual(lay["mode"], "stacked")
+        canvas, cat, _ = h.screen(items, 0, 40, 37, lay)
+        left, top, crows, ccols = cat
+        stem = plain(canvas[top + crows])
+        self.assertEqual(stem.strip(), "╷")
+        x = stem.index("╷")
+        self.assertEqual(plain(canvas[top + crows + 1])[x], "┴")
+        self.assertLessEqual(abs(x + 1 - (left + ccols // 2)), 2)   # under the cat's mouth
+        # a narrow bubble whose title fills its middle: the cat moves over the ─ the tail can join
+        for cols in range(16, 60):
+            for cw, ch in ((10, 20), (20, 40)):
+                lay = h.layout(cols, 40, cw, ch)
+                if lay["mode"] != "stacked":
+                    continue
+                for sel in range(len(items)):
+                    canvas, cat, _ = h.screen(items, sel, cols, 40, lay)
+                    left, top, crows, ccols = cat
+                    x = plain(canvas[top + crows]).index("╷")
+                    self.assertEqual(plain(canvas[top + crows + 1])[x], "┴", (cols, cw, sel))
+                    self.assertTrue(left <= x + 1 < left + ccols, (cols, cw, sel, cat, x))   # under the picture
+                    # where a ─ of the top border is one the cat can sit right over, its mouth is there
+                    spots = h.top_border(items[sel], sel, len(items), lay["width"])[2]
+                    if any(ccols // 2 + 1 <= lay["bubble_col"] + c <= cols - ccols + ccols // 2 + 1 for c in spots):
+                        self.assertLessEqual(abs(x + 1 - (left + ccols // 2)), 1, (cols, cw, sel, cat, x))
+                    self.assertLessEqual(left + ccols - 1, cols)
+        # alone: no tail
+        lay = h.layout(30, 12, 10, 20)
+        self.assertEqual(lay["mode"], "alone")
+        canvas, _, _ = h.screen(items, 0, 30, 12, lay)
+        self.assertFalse(set("┤┴╷╶") & set("".join(map(plain, canvas.values()))))
+
+    def test_the_stacked_tail_finds_the_border_past_a_long_title(self):
+        item = {"kind": "tip", "title": "Tip of the day", "text": "x", "action": None}
+        lines, _, col = self.h.bubble(item, 0, 3, 26, tail=("top", 8))
+        top = plain(lines[0])
+        self.assertEqual(top[col], "┴")
+        self.assertIn("Tip of the day", top)                # the title stays whole
+        self.assertEqual(len(top), 26)
+
+    def test_the_cat_is_never_scaled_up(self):
+        h = self.h
+        for ch in range(8, 97, 4):
+            for cols, lines in ((40, 30), (80, 40), (200, 60), (60, 14)):
+                lay = h.layout(cols, lines, max(4, ch // 2), ch)
+                if lay["cat"]:
+                    px = lay["cat"][1] * ch
+                    self.assertGreaterEqual(lay["size"], px, (ch, cols, lines))
+                    self.assertEqual(lay["size"], min(s for s in h.SIZES if s >= px), (ch, cols, lines))
+        self.assertEqual(h.layout(77, 37, 10, 20)["size"], 384)     # 200 px: the big frames
+        self.assertEqual(h.layout(77, 37, 20, 40)["cat"][1], 6)     # a 2x screen: 6 rows of 40 px
+        self.assertEqual(h.layout(77, 37, 20, 40)["size"], 384)
+        self.assertEqual(h.layout(77, 37, 32, 64)["cat"][1], 6)     # 6 rows still fit 384 px
+        self.assertEqual(h.layout(120, 60, 40, 80)["cat"][1], 4)
+        self.assertEqual(h.layout(120, 60, 60, 120)["cat"][1], 3)   # fewer rows rather than a soft cat
+
+    def test_a_narrow_bubble_keeps_every_button(self):
+        h = self.h
+        go = self.items()[0]
+        quest = {"kind": "quest", "title": "Today's quest", "text": "Use it once.", "action": ("help",),
+                 "button": "All shortcuts"}
+        tip = {"kind": "tip", "title": "Tip of the day", "text": "A tip.", "action": None}
+        for item, n, want in ((go, 5, {"do", "next", "quit"}), (quest, 5, {"do", "next", "quit"}),
+                              (tip, 5, {"next", "quit"}), (go, 1, {"do", "quit"}), (tip, 1, {"quit"})):
+            for width in range(10, 60):
+                lines, regions, _ = h.bubble(item, 0, n, width)
+                self.assertEqual({r[3] for r in regions}, want, (item["kind"], n, width))
+                self.assertTrue(all(h.cells(plain(x)) == width for x in lines), (width, lines))
+        row = plain(h.bubble(quest, 0, 5, 30)[0][-2])
+        self.assertIn("Shortcuts ↵", row)
+        self.assertIn("Next ›", row)
+        self.assertIn("×", row)
+        self.assertIn(" Go there ↵   Next ›  Close ×", plain(h.bubble(go, 0, 5, 40)[0][-2]))
+
+    def test_clicks_land_only_on_buttons_drawn(self):
+        h = self.h
+        items = self.items(tab(8, "done"))
+        labels = {"do": ("↵",), "next": ("›",), "quit": ("×",)}
+        for cols in (20, 30, 40, 77, 120):
+            for lines in (4, 5, 6, 8, 10, 16, 37):
+                for cw, ch in ((10, 20), (20, 40)):
+                    lay = h.layout(cols, lines, cw, ch)
+                    for sel in range(len(items)):
+                        for notice in ("", "Got it: I won't suggest that one again."):
+                            canvas, cat, regions = h.screen(items, sel, cols, lines, lay, notice)
+                            for r in regions:
+                                if r[0] == "cat":
+                                    continue
+                                row, c0, c1, cmd = r
+                                where = (cols, lines, cw, sel, notice, r)
+                                self.assertLess(row, lines, where)          # never the footer
+                                text = plain(canvas.get(row, ""))
+                                self.assertTrue(any(w in text[c0 - 1:c1] for w in labels[cmd]), (where, text))
+                            if lines >= 6 and cols >= 14:                    # room for the buttons: all there
+                                self.assertIn("quit", {r[3] for r in regions if r[0] != "cat"}, (cols, lines, sel))
+
+
+class Behaviour(HelperCase):
+    """What a review asked for: the day's picks rotate, dismissals are kept safely, the tab that
+    just started waiting is offered, the clocks keep running."""
+    def test_every_remaining_daily_line_comes_round(self):
+        pool = [f"t{i}" for i in range(7)]
+        hidden = {self.h.key_of("tip", "t0"), self.h.key_of("tip", "t3")}    # five left
+        for offset in (3, 5, 7):
+            picks = {self.h.daily("tip", pool, 739000 + d, offset, hidden) for d in range(5)}
+            self.assertEqual(picks, {1, 2, 4, 5, 6}, offset)
+
+    def test_two_helpers_hiding_at_once_lose_nothing(self):
+        code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('h', sys.argv[1]); "
+                "h = importlib.util.module_from_spec(s); s.loader.exec_module(h)\n"
+                "for i in range(30): h.hide(sys.argv[2], f'{sys.argv[3]}:{i}')")
+        procs = [subprocess.Popen([sys.executable, "-c", code, HELPER, self.state, f"p{n}"]) for n in range(4)]
+        for p in procs:
+            self.assertEqual(p.wait(timeout=60), 0)
+        self.assertEqual(len(self.h.load_hidden(self.state)), 120)
+
+    def test_a_read_only_state_folder_keeps_the_line_and_says_so(self):
+        h = self.h.Helper(io.StringIO(), self.conf, self.state, now=lambda: NOON, rng=Dice())
+        h.refresh([tab(1, active=True)])
+        h.sel = next(i for i, s in enumerate(h.items) if s["kind"] == "tip")
+        before = list(h.items)
+        with mock.patch.object(self.h, "hide", side_effect=PermissionError("read-only")):
+            self.assertEqual(h.act("hide"), "")
+        self.assertIn("Not saved", h.notice)
+        self.assertEqual(h.items, before)
+        self.assertEqual(h.items[h.sel]["kind"], "tip")
+
+    def test_the_tab_that_just_started_waiting_is_offered(self):
+        h = self.h.Helper(io.StringIO(), self.conf, self.state, now=lambda: NOON, rng=Dice())
+        h.refresh([tab(1, active=True), tab(2, "blocked", "old")])
+        self.assertEqual(h.items[h.sel]["action"], ("focus", 102))
+        tabs = [tab(1, active=True), tab(2, "blocked", "old"), tab(5, "blocked", "new")]
+        self.assertTrue(h.refresh(tabs))
+        self.assertEqual(h.items[h.sel]["action"], ("focus", 105))
+        self.assertIn("tab 5", h.items[h.sel]["text"])
+        self.assertFalse(h.refresh(tabs))                  # a second later: still tab 5
+        self.assertEqual(h.items[h.sel]["action"], ("focus", 105))
+        h.refresh([tab(1, active=True), tab(2, "blocked", "old"), tab(5, "done", "new")])
+        self.assertEqual(h.items[h.sel]["action"], ("focus", 102))   # done waiting: the usual order
+
+    def test_a_jump_alone_still_redraws(self):
+        h = self.h.Helper(io.StringIO(), self.conf, self.state, now=lambda: NOON, rng=Dice())
+        tabs = [tab(1, active=True), tab(7, "blocked", "API")]
+        h.refresh(tabs)
+        h.sel = len(h.items) - 1                          # reading the word of the day
+        h.seen = (set(), h.seen[1], h.seen[2])            # ... when tab 7 (already listed) starts waiting
+        self.assertTrue(h.refresh(tabs))                  # same lines, but the bubble moved to it
+        self.assertEqual(h.items[h.sel]["kind"], "waiting")
+
+    def test_the_clocks_run_while_keys_keep_coming(self):
+        h = self.h.Helper(io.StringIO(), self.conf, self.state, now=lambda: NOON, rng=Dice())
+        h.refresh([tab(1, active=True)])
+        h.queue = []
+        h.start_clocks(0.0)
+        looks = []
+        h.play("hop")
+        t = 0.0
+        while t < 2.05:                                  # a held arrow: a batch of keys every 30 ms
+            h.due(t, lambda: looks.append(t) or [tab(1, active=True)])
+            t += 0.03
+        self.assertEqual(len(looks), 2)                  # the tabs looked at once a second
+        self.assertFalse(h.queue)                        # the hop played through (11 ticks of 1/8 s)
+        self.assertLess(h.wait(t), 1.0)
+
+    def test_without_kitty_the_day_still_turns(self):
+        day = [datetime.datetime(2026, 11, 26, 23, 59, 59)]
+        h = self.h.Helper(io.StringIO(), self.conf, self.state, now=lambda: day[0], rng=Dice())
+        h.refresh([])
+        h.start_clocks(0.0)
+        hello = h.items[0]["text"]
+        day[0] = datetime.datetime(2026, 11, 27, 0, 0, 1)
+        self.assertTrue(h.due(1.5, lambda: None))        # kitty can't be asked: the rows it had
+        self.assertNotEqual(h.items[0]["text"], hello)
+        self.assertIn("November 27", h.items[0]["text"])
+
+
 class Toggle(HelperCase):
     def test_which_windows_are_helpers(self):
         conf_dir = os.path.join(self.tmp.name, "kc")
@@ -381,6 +576,10 @@ class Toggle(HelperCase):
         self.assertTrue(h._is_helper(["sh", "-c", 'exec python3 "${KITTY_CONFIG_DIRECTORY:-x}/cat-helper.py"']))
         self.assertFalse(h._is_helper(["python3", os.path.join(conf_dir, "cat-helper.py"), "say"]))
         self.assertFalse(h._is_helper(["vim", "cat-helper.py"]))
+        # only the script counts, not an argument that happens to be the helper's path
+        self.assertFalse(h._is_helper(["python3", "report.py", os.path.join(conf_dir, "cat-helper.py")]))
+        self.assertTrue(h._is_helper(["python3", "-u", os.path.join(conf_dir, "cat-helper.py"), "panel"]))
+        self.assertTrue(h._is_helper(["python3", os.path.join(conf_dir, "cat-helper.py"), "panel"]))
         self.assertFalse(h._is_helper(["bash"]))
         data = [{"tabs": [
             {"windows": [{"id": 1, "cmdline": ["bash"]},
@@ -392,8 +591,14 @@ class Toggle(HelperCase):
         data[0]["tabs"][0]["windows"].insert(1, dict(data[0]["tabs"][1]["windows"][0], id=4))
         self.assertEqual(h.other_helpers(data, here_only=True), [4])
         with mock.patch.object(h, "kitty") as k:
-            self.assertTrue(h.toggle_off_others(data))
+            self.assertEqual(h.toggle_off_others(data), (True, ""))
             self.assertEqual(sorted(c.args[2] for c in k.call_args_list), ["id:3", "id:4"])
+        gone = subprocess.CalledProcessError(1, "kitty", stderr="Error: No matching windows for expression: id:4")
+        with mock.patch.object(h, "kitty", side_effect=gone):
+            self.assertEqual(h.toggle_off_others(data), (True, ""))     # gone already: closed
+        refused = subprocess.CalledProcessError(1, "kitty", stderr="Error: remote control is disabled")
+        with mock.patch.object(h, "kitty", side_effect=refused):
+            self.assertEqual(h.toggle_off_others(data), (False, h.CLOSE_FAILED))   # this one stays open
 
     def test_run_from_a_shell_its_own_tab_isnt_working(self):
         h = self.h

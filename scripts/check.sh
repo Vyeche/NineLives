@@ -67,7 +67,7 @@ import os, struct
 frames = ("idle", "blink", "wink", "ear", "tail-left", "tail-right", "look-left", "look-right", "nod",
           "hop-low", "hop", "wave", "surprised", "happy", "sleepy")
 bad, total = [], 0
-for size in (96, 192):
+for size in (96, 192, 384):
     for f in frames:
         p = f"config/cat/{size}/{f}.png"
         try:
@@ -75,11 +75,11 @@ for size in (96, 192):
         except OSError:
             bad.append(p + " missing"); continue
         total += os.path.getsize(p)
-        if head[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", head[16:24]) != (size, size) or os.path.getsize(p) > 8000:
+        if head[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", head[16:24]) != (size, size) or os.path.getsize(p) > (8000 if size <= 192 else 16000):
             bad.append(p)
 print(" ".join(bad) if bad else f"ok {total // 1024}")
 EOF
-)" && [ "${out%% *}" = ok ]; then ok "all 30 frames there, PNGs of the right size, ${out#ok } KB in all"
+)" && [ "${out%% *}" = ok ]; then ok "all 45 frames there (15 poses in 3 sizes), PNGs of the right size, ${out#ok } KB in all"
 else fail "cat frames: $out"; fi
 
 echo "Docs"

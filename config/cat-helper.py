@@ -129,11 +129,12 @@ def key_of(kind: str, text: str) -> str:
     return f"{kind}:{hashlib.sha1(text.encode()).hexdigest()[:10]}"
 
 
-def daily(kind: str, pool, day: int, step: int, hidden) -> int:
-    """Today's pick of a pool: the same all day (keyed on the date), a different one tomorrow, never
-    one you said not to suggest. -1 when there is none left."""
+def daily(kind: str, pool, day: int, offset: int, hidden) -> int:
+    """Today's pick of a pool: the same all day (keyed on the date), the next one tomorrow (one step
+    a day, so every one still left comes round), never one you said not to suggest. `offset` keeps
+    the kinds apart. -1 when there is none left."""
     left = [i for i, x in enumerate(pool) if key_of(kind, x if isinstance(x, str) else x[0]) not in hidden]
-    return left[(day * step) % len(left)] if left else -1
+    return left[(day + offset) % len(left)] if left else -1
 
 
 def load_hidden(state: str) -> set:
@@ -145,12 +146,20 @@ def load_hidden(state: str) -> set:
 
 
 def hide(state: str, key: str) -> None:
-    hidden = load_hidden(state) | {key}
+    """Add a key to cat-helper-hidden. Two helpers open at once can't lose each other's: the file is
+    read and replaced under a lock (flock, which macOS has too). Raises OSError when it can't save."""
     os.makedirs(state, exist_ok=True)
     path = os.path.join(state, "cat-helper-hidden")
-    with open(path + ".tmp", "w", encoding="utf-8") as f:
-        f.write("".join(k + "\n" for k in sorted(hidden)))
-    os.replace(path + ".tmp", path)
+    with open(path + ".lock", "a", encoding="utf-8") as lock:
+        try:
+            import fcntl
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        except ImportError:                           # (no fcntl: not a Unix; nothing to lock with)
+            pass
+        hidden = load_hidden(state) | {key}
+        with open(path + ".tmp", "w", encoding="utf-8") as f:
+            f.write("".join(k + "\n" for k in sorted(hidden)))
+        os.replace(path + ".tmp", path)
 
 
 ESC_RE = re.compile("\x1b\\[[0-9;]*m")
@@ -210,17 +219,20 @@ def greeting(now: datetime.datetime) -> str:
     return f"{part}! It's {now.strftime('%A')}, {now.strftime('%B')} {now.day}."
 
 
-def suggestions(tabs, now: datetime.datetime, state: str, conf: str, hidden=frozenset(), tip_pool=None) -> list:
+def suggestions(tabs, now: datetime.datetime, state: str, conf: str, hidden=frozenset(), tip_pool=None,
+                first=None) -> list:
     """Everything the cat has to say, most important first: tabs waiting for you, tabs that failed,
     tabs that finished (or, with none of those, a hello that says nothing needs you), a badge earned
     today, today's quest; then the day's own lines (a tip, a joke, a word), each the same all day. Each is a dict: kind, key,
-    title, text, action (("focus", tab id), ("help",) or None) and its button's words."""
+    title, text, action (("focus", tab id), ("help",) or None) and its button's words. `first`: the
+    id of the tab that started waiting last, offered before the others that wait."""
     out = []
     others = [t for t in tabs if not t.get("active")]
     here = next((t for t in tabs if t.get("active")), None)
     for state_name, kind, title in (("blocked", "waiting", "Needs you"), ("error", "error", "Error")):
         ts = [t for t in tabs if t.get("state") == state_name]
-        ts.sort(key=lambda t: t is here)              # another tab first: this one is under the cat
+        # another tab first (this one is under the cat); of those, the one that just started waiting
+        ts.sort(key=lambda t: (t is here, kind != "waiting" or t["id"] != first))
         if not ts:
             continue
         t = ts[0]
@@ -262,9 +274,9 @@ def suggestions(tabs, now: datetime.datetime, state: str, conf: str, hidden=froz
             out.append({"kind": "quest", "key": f"quest:{badge}", "title": "Today's quest", "action": ("help",),
                         "button": "All shortcuts", "text": f"{how.rstrip('.')}. Use it once to earn the {badge} badge."})
     pool = tips() if tip_pool is None else tip_pool
-    for kind, items, step, title in (("tip", pool, 5, "Tip of the day"), ("joke", JOKES, 7, "Joke of the day"),
-                                     ("word", WORDS, 3, "Word of the day")):
-        i = daily(kind, items, day, step, hidden) if items else -1
+    for kind, items, offset, title in (("tip", pool, 5, "Tip of the day"), ("joke", JOKES, 7, "Joke of the day"),
+                                       ("word", WORDS, 3, "Word of the day")):
+        i = daily(kind, items, day, offset, hidden) if items else -1
         if i < 0:
             continue
         x = items[i]
@@ -333,11 +345,13 @@ def _is_helper(argv) -> bool:
     """argv is a helper's own command: `python3 …/cat-helper.py [panel]` (with kitty.conf next to
     it) or `sh -c 'exec python3 "${KITTY_CONFIG_DIRECTORY…}/cat-helper.py"'`. Not `say`."""
     if len(argv) >= 2 and os.path.basename(argv[0]).startswith("python"):
-        for i, a in enumerate(argv[1:], 1):
-            if os.path.basename(a) == "cat-helper.py":
-                return argv[i + 1:] in ([], ["panel"]) and os.path.isfile(
-                    os.path.join(os.path.dirname(a), "kitty.conf"))
-        return False
+        # the script is the first argument that isn't an option (python3 -u x.py): one named
+        # cat-helper.py further on is just an argument (python3 report.py …/cat-helper.py)
+        i = next((i for i, a in enumerate(argv[1:], 1) if not a.startswith("-")), None)
+        if i is None or os.path.basename(argv[i]) != "cat-helper.py":
+            return False
+        return argv[i + 1:] in ([], ["panel"]) and os.path.isfile(
+            os.path.join(os.path.dirname(argv[i]), "kitty.conf"))
     if len(argv) >= 3 and os.path.basename(argv[0]) in SHELLS and argv[1] == "-c":
         return "KITTY_CONFIG_DIRECTORY" in argv[2] and re.search(
             r'/cat-helper\.py"?(\s+panel)?\s*$', argv[2]) is not None
@@ -357,24 +371,36 @@ def other_helpers(data, here_only: bool = False) -> list:
     return ids
 
 
-def toggle_off_others(data) -> bool:
+CLOSE_FAILED = "I couldn't close the other cat (kitty said no), so here I am. Esc closes me."
+
+
+def toggle_off_others(data) -> tuple:
     """The key (or a click on the sidebar's cat) toggles: a helper open in this tab is closed and
-    this one goes away; one left open in another tab is closed. True: don't open."""
+    this one goes away; one left open in another tab is closed. (True, ""): one here was closed,
+    don't open. A close that fails (other than the window being gone already) keeps this one open,
+    with a notice: (False, CLOSE_FAILED)."""
     if data is None:
-        return False
-    here = other_helpers(data, here_only=True)
+        return False, ""
+    here = set(other_helpers(data, here_only=True))
+    failed = set()
     for wid in other_helpers(data):
         try:
             kitty("close-window", "--match", f"id:{wid}")
+        except subprocess.CalledProcessError as e:
+            if "no matching" not in f"{e.stderr or ''} {e.stdout or ''}".lower():   # (gone already: closed)
+                failed.add(wid)
         except (OSError, subprocess.SubprocessError):
-            pass
-    return bool(here)
+            failed.add(wid)
+    if here and not here & failed:
+        return True, ""
+    return False, CLOSE_FAILED if failed else ""
 
 
 # ---- the picture: kitty's graphics protocol -------------------------------------------------------------
 FRAMES = ("idle", "blink", "wink", "ear", "tail-left", "tail-right", "look-left", "look-right", "nod",
           "hop-low", "hop", "wave", "surprised", "happy", "sleepy")
-SIZES = (96, 192)            # the shipped frames (px); the one nearest the box is shown, kitty scales it
+SIZES = (96, 192, 384)       # the shipped frames (px): the smallest at least as big as the box is
+                             # shown, so kitty only ever scales a frame down
 PLACEMENT = 7                # our one placement: a new frame replaces the old one in place
 CHUNK = 4096                 # base64 bytes per escape code (the protocol's limit)
 # moves: (frame, ticks) in a row, then back to the resting frame
@@ -433,17 +459,23 @@ BUBBLE_MIN = 26
 TEXT_LINES = 4
 
 
+def frame_size(px: int) -> int:
+    """The shipped frames to show in a box `px` tall: the smallest at least that big (kitty scales
+    it down a little, which stays sharp), the biggest if none is."""
+    return next((s for s in SIZES if s >= px), SIZES[-1])
+
+
 def layout(cols: int, lines: int, cell_w: int, cell_h: int) -> dict:
     """Where things go: the cat (top-left cell, rows, cols, which size of frames), the bubble (left
     column, width) and the footer line. Side by side when the window is wide enough, the cat above
     the bubble when it is tall enough, else the bubble alone. Lines and columns count from 1."""
     cell_w, cell_h = max(1, cell_w), max(1, cell_h)
     # 10 lines tall at the usual cell size (200 px); with big cells (a big font, a 2x screen) at
-    # least 6, which kitty scales the 192 px frames up to (a little soft, not small)
-    rows = max(4, min(10, (lines - 2) // 2, max(6, 200 // cell_h)))
+    # least 6, but never taller than the biggest frames, so kitty never scales one up (soft)
+    most = max(1, SIZES[-1] // cell_h)
+    rows = min(most, max(4, min(10, (lines - 2) // 2, max(6, 200 // cell_h))))
     cat_cols = -(-rows * cell_h // cell_w)
-    size = SIZES[0] if rows * cell_h <= 120 else SIZES[-1]
-    out = {"cat": None, "size": size, "footer": lines}
+    out = {"cat": None, "size": frame_size(rows * cell_h), "footer": lines}
     # the bubble starts in the picture's empty right edge (no pose reaches past 94 % of it: the
     # tail swung right is the farthest), so its tail reaches close to the cat's cheek
     tuck = int(cat_cols * 0.05)
@@ -457,90 +489,151 @@ def layout(cols: int, lines: int, cell_w: int, cell_h: int) -> dict:
         out.update(bubble_col=max(1, (cols - width) // 2 + 1), width=width, mode="alone")
         rows = min(rows, (cols - 2) * cell_w // cell_h)          # as wide as the window at most
         cat_cols = -(-rows * cell_h // cell_w)
-        if rows >= 4 and lines >= rows + 10:
+        if rows >= min(4, most) and lines >= rows + 10:
             out.update(cat=(max(1, (cols - cat_cols) // 2 + 1), rows, cat_cols), mode="stacked",
-                       size=SIZES[0] if rows * cell_h <= 120 else SIZES[-1])
+                       size=frame_size(rows * cell_h))
     return out
 
 
-def bubble(item, i: int, n: int, width: int, notice: str = "") -> tuple:
-    """The bubble's lines (with colour) and its buttons: [(line index, first col, last col, command)]
-    (cols counted from the bubble's left edge, 0-based)."""
+RETURN = "↵"                 # on the button Enter presses (DejaVu Sans Mono's ⏎ is small and faint)
+SHORT = {"Go there": "Go", "All shortcuts": "Shortcuts"}
+
+
+def button_row(item, n: int, inner: int) -> tuple:
+    """The buttons, [(words, command, primary)], and the gap between them: the longest words that
+    fit `inner` cells, so a narrow bubble keeps every button ("Close ×" becomes "×" first, then the
+    offered action and "Next ›" get shorter), the way the sidebar's search row shortens its words."""
+    act = item.get("button", "Go") if item.get("action") else None
+    short = SHORT.get(act, act)
+    tiers = []
+    for words, nxt, close, gap in ((act, "Next ›", "Close ×", 2), (act, "Next ›", "×", 2), (short, "Next ›", "×", 2),
+                                   (short, "›", "×", 2), ("", "›", "×", 2), (None, "›", "×", 1)):
+        do = f" {words} {RETURN} " if words else f" {RETURN} " if words == "" else RETURN
+        row = ([(do, "do", True)] if act else []) + ([(nxt, "next", False)] if n > 1 else []) \
+            + [(close, "quit", False)]
+        tiers.append((row, gap))
+    for row, gap in tiers:
+        if sum(cells(w) for w, _, _ in row) + gap * (len(row) - 1) <= inner:
+            return row, gap
+    return tiers[-1]
+
+
+def top_border(item, i: int, n: int, width: int) -> tuple:
+    """The top border's title and count (`2/6`, none when too narrow), and the cols (from the
+    bubble's left edge) where it is `─`, so a tail can join it there."""
+    count = f" {i + 1}/{n} " if n > 1 and width - 6 - len(f" {i + 1}/{n} ") >= 1 else ""
+    title = cut(item["title"], max(1, width - 6 - cells(count)))
+    run = max(0, width - 6 - cells(title) - cells(count))
+    first = 4 + cells(title)
+    return title, count, [1, *range(first, first + run), width - 2]
+
+
+def bubble(item, i: int, n: int, width: int, notice: str = "", room=None, tail=None) -> tuple:
+    """The bubble's lines (with colour), its buttons [(line index, first col, last col, command)]
+    (cols counted from the bubble's left edge, 0-based) and where its tail joins the top border
+    (that col, or None). `room`: the lines it may take; the buttons keep theirs, the text gets
+    shorter. `tail`: ("left", line index) joins a tail to the left border there (`┤`, the rest is
+    drawn left of the bubble), ("top", col) to the top border at the `─` nearest that col (`┴`)."""
     inner = width - 4
     kind = item["kind"]
     col = f"\x1b[3{KIND_COLOUR.get(kind, 4)}m"
-    count = f" {i + 1}/{n} " if n > 1 else ""
-    title = cut(item["title"], max(1, inner - cells(count) - 2))
-    top = f"╭─ {B}{col}{title}{R}{MUTED} " + "─" * max(0, width - 5 - cells(title) - cells(count) - 1) \
-        + f"{count}─╮{R}"
-    top = f"{MUTED}{top}"
-    body = wrap(item["text"], inner, TEXT_LINES)
-    if notice:
-        body += ["", *(f"{MUTED}{x}{R}" for x in wrap(notice, inner, 2))]
-    out = [top] + [f"{MUTED}│{R} {x}{' ' * (inner - cells(ESC_RE.sub('', x)))} {MUTED}│{R}" for x in body]
-    # buttons: the offered action (reverse video), next, close
-    buttons = []
-    if item.get("action"):
-        buttons.append((f" {item.get('button', 'Go')} ⏎ ", "do", True))
-    buttons.append(("Next ›" if n > 1 else "", "next", False))
-    buttons.append(("Close ×", "quit", False))
+    title, count, spots = top_border(item, i, n, width)
+    first, run = 4 + cells(title), len(spots) - 2                   # the top border's ─ after the title
+    top_col = None
+    if tail and tail[0] == "top":
+        top_col = min(spots, key=lambda c: (abs(c - tail[1]), c))
+
+    def dash(c):
+        return "┴" if c == top_col else "─"
+    top = (f"{MUTED}╭{dash(1)} {B}{col}{title}{R}{MUTED} " + "".join(dash(c) for c in range(first, first + run))
+           + f"{count}{dash(width - 2)}╮{R}")
+    text = wrap(item["text"], inner, TEXT_LINES)
+    extra = wrap(notice, inner, 2) if notice else []
+    body = text + ([""] + [f"{MUTED}{x}{R}" for x in extra] if extra else [])
+    blank = True                                     # the empty line above the buttons
+    if room is not None and len(body) + 4 > room:
+        blank = False
+        if len(body) + 3 > room:                     # too tall: the text gets shorter, the buttons stay
+            keep = max(1, room - 3)
+            extra = extra[:max(0, keep - 1)]
+            body = (wrap(item["text"], inner, max(1, keep - len(extra))) + [f"{MUTED}{x}{R}" for x in extra])[:keep]
+    row, gap = button_row(item, n, inner)
     line, plain, at, regions = "", "", 2, []
-    for words, cmd, primary in buttons:
-        if not words:
+    buttons_at = 1 + len(body) + blank
+    for words, cmd, primary in row:
+        g = gap if plain else 0
+        if cells(plain) + g + cells(words) > inner:
             continue
-        gap = 2 if plain else 0
-        if cells(plain) + gap + cells(words) > inner:
-            continue
-        line += " " * gap + (f"\x1b[7m{words}\x1b[27m" if primary else words)
-        regions.append((len(out) + 1, at + cells(plain) + gap, at + cells(plain) + gap + cells(words) - 1, cmd))
-        plain += " " * gap + words
-    out.append(f"{MUTED}│{R}{' ' * (inner + 2)}{MUTED}│{R}")
-    out.append(f"{MUTED}│{R} {line}{' ' * (inner - cells(plain))} {MUTED}│{R}")
+        line += " " * g + (f"\x1b[7m{words}\x1b[27m" if primary else words)
+        regions.append((buttons_at, at + cells(plain) + g, at + cells(plain) + g + cells(words) - 1, cmd))
+        plain += " " * g + words
+    middle = body + ([""] if blank else []) + [line]
+    out = [top]
+    for x in middle:
+        edge = "┤" if tail == ("left", len(out)) else "│"
+        x_cells = cells(ESC_RE.sub("", x))
+        out.append(f"{MUTED}{edge}{R} {x}{' ' * (inner - x_cells)} {MUTED}│{R}")
     out.append(f"{MUTED}╰{'─' * (width - 2)}╯{R}")
-    return out, regions
+    return out, regions, top_col
 
 
 FOOTERS = ("Enter do it · ←→ more · d don't suggest this one · Esc close",
            "Enter · ←→ more · d hide · Esc close", "←→ · Esc close")
+TAIL_SIDE = "╶─"             # left of the bubble's ┤, reaching toward the cat beside it
+TAIL_UP = "╷"                # above the bubble's ┴, toward the cat sitting on top of it
 
 
 def screen(items, sel: int, cols: int, lines: int, lay: dict, notice: str = "") -> tuple:
     """The text of every line (1-based dict), where the cat goes (col, row, rows), and the click
-    regions: [(row, first col, last col, command)] on the screen (1-based)."""
+    regions: [(row, first col, last col, command)] on the screen (1-based), only for buttons drawn.
+    The bubble's tail points at the cat: from its left border at the cat's cheek when the cat sits
+    beside it, from its top border when the cat sits above it; none when the bubble is alone."""
     item = items[sel]
     width = lay["width"]
-    bl, regions = bubble(item, sel, len(items), width, notice)
+    bcol = lay["bubble_col"]
+
+    def make(room, tail=None):
+        return bubble(item, sel, len(items), width, notice, room, tail)
     canvas = {}
-    regions_out = []
     cat = None
-    tail_row = None
     if lay["mode"] == "side":
         left, rows, cat_cols = lay["cat"]
+        bl, _, _ = make(lines - 1)
         h = max(rows, len(bl))
         top = max(1, (lines - 1 - h) // 2 + 1)
         cat_top = min(top + max(0, (len(bl) - rows) // 2), lines - rows)
-        b_top = top + max(0, (rows - len(bl)) // 3)
+        b_top = max(1, min(top + max(0, (rows - len(bl)) // 3), lines - len(bl)))
         cat = (left, cat_top, rows, cat_cols)
         tail_row = min(b_top + len(bl) - 2, max(b_top + 1, cat_top + rows * 2 // 5))   # its cheek
+        tail = ("left", tail_row - b_top) if bcol > len(TAIL_SIDE) and len(bl) >= 3 else None
+        bl, regions, _ = make(lines - 1, tail)
+        if tail:
+            canvas[tail_row] = " " * (bcol - 1 - len(TAIL_SIDE)) + f"{MUTED}{TAIL_SIDE}{R}"
     elif lay["mode"] == "stacked":
-        left, rows, cat_cols = lay["cat"]
+        _, rows, cat_cols = lay["cat"]
+        bl, _, _ = make(None)
         top = max(1, (lines - 1 - rows - 1 - len(bl)) // 2 + 1)
-        cat = (left, top, rows, cat_cols)
         b_top = top + rows + 1
+        # the tail joins the top border at a ─ (the title can fill the middle of a narrow bubble),
+        # and the cat sits with its mouth (the middle of the picture) right above it: the ─ nearest
+        # the middle that the cat can get over without leaving the window
+        def spot(c):
+            x = min(max(1, bcol + c - cat_cols // 2), max(1, cols - cat_cols + 1))
+            return abs(x + cat_cols // 2 - bcol - c), abs(c - width // 2), x
+        _, _, left = min(spot(c) for c in top_border(item, sel, len(items), width)[2])
+        cat = (left, top, rows, cat_cols)
+        bl, regions, tcol = make(lines - b_top, ("top", left + cat_cols // 2 - bcol))
+        canvas[b_top - 1] = " " * (bcol - 1 + tcol) + f"{MUTED}{TAIL_UP}{R}"
     else:
+        bl, regions, _ = make(lines - 1)
         b_top = max(1, (lines - 1 - len(bl)) // 2 + 1)
-    bcol = lay["bubble_col"]
     for i, text in enumerate(bl):
         row = b_top + i
         if row >= lines:
             break
-        pre = " " * (bcol - 1)
-        if row == tail_row:                 # the bubble's tail, pointing at the cat
-            pre = " " * (bcol - 3) + f"{MUTED}◂─{R}"
-            text = f"{MUTED}┤{R}" + text[len(f"{MUTED}│{R}"):]
-        canvas[row] = pre + text
-    for line_i, c0, c1, cmd in regions:
-        regions_out.append((b_top + line_i, bcol + c0, bcol + c1, cmd))
+        canvas[row] = canvas.get(row, " " * (bcol - 1)) + text
+    regions_out = [(b_top + line_i, bcol + c0, bcol + c1, cmd) for line_i, c0, c1, cmd in regions
+                   if b_top + line_i < lines]                  # drawn (not under the footer)
     if cat:
         regions_out.append(("cat", cat))
     words = next((f for f in FOOTERS if cells(f) <= cols - 2), FOOTERS[-1])
@@ -637,6 +730,7 @@ class Helper:
         self.regions = []
         self.notice = ""
         self.size = (80, 24, 10, 20)
+        self.prefer = None           # the tab that started waiting last: offered first while it waits
 
     # what to say
     def refresh(self, tabs) -> bool:
@@ -645,16 +739,21 @@ class Helper:
         True when the bubble changed."""
         self.tabs = tabs
         old = self.items[self.sel]["key"] if self.items else None
-        before = [(s["key"], s["text"]) for s in self.items]
-        self.items = suggestions(tabs, self.now(), self.state, self.conf, load_hidden(self.state))
+        before = self.looks()
         waiting = {t["id"] for t in tabs if t.get("state") == "blocked"}
         done = {t["id"] for t in tabs if t.get("state") == "done"}
         error = {t["id"] for t in tabs if t.get("state") == "error"}
+        new = waiting - self.seen[0] if self.seen is not None else set()
+        if new:                                        # (of several at once: the first in the sidebar)
+            self.prefer = next(t["id"] for t in tabs if t["id"] in new)
+        elif self.prefer not in waiting:
+            self.prefer = None
+        self.items = self.suggest()
         keys_now = [s["key"] for s in self.items]
         # stay on what it was saying (the list may have grown in front of it); only a tab that just
         # started waiting moves the bubble
         self.sel = keys_now.index(old) if old in keys_now else min(self.sel, len(self.items) - 1)
-        if self.seen is not None and waiting - self.seen[0]:
+        if new:
             self.play("surprise")
             self.sel = next((i for i, s in enumerate(self.items) if s["kind"] == "waiting"), self.sel)
         elif self.seen is not None and done - self.seen[1]:
@@ -666,7 +765,18 @@ class Helper:
             self.play(next((m for k, m in (("waiting", "surprise"), ("error", "ear"), ("done", "hop"),
                                            ("badge", "cheer")) if k in kinds), "nod"))
         self.seen = (waiting, done, error)
-        return before != [(s["key"], s["text"]) for s in self.items]
+        return before != self.looks()
+
+    def suggest(self) -> list:
+        return suggestions(self.tabs, self.now(), self.state, self.conf, load_hidden(self.state),
+                           first=self.prefer)
+
+    def looks(self):
+        """What the bubble shows and what Enter does: when this changes, it's drawn again."""
+        if not self.items:
+            return None
+        item = self.items[self.sel]
+        return [(s["key"], s["text"], s.get("action")) for s in self.items], self.sel, item["key"], item.get("action")
 
     def rest(self) -> str:
         """The frame between moves: asleep at night when nothing needs you, else sitting."""
@@ -687,6 +797,38 @@ class Helper:
             self.play("blink")
         elif r < BLINK + FIDGET:
             self.play(self.rng.choice(FIDGETS))
+
+    # the clocks: a frame of the move playing every TICK, the dice once a second, a look at the
+    # tabs every POLL; each on its own deadline, checked after every wait and every batch of keys
+    def start_clocks(self, now: float) -> None:
+        self.next_tick, self.next_roll, self.next_poll = now + TICK, now + 1.0, now + POLL
+        self.ticking = self.queue
+
+    def _new_move(self, now: float) -> None:
+        if self.queue is not self.ticking:             # a move just started: its first frame gets a whole tick
+            self.ticking, self.next_tick = self.queue, now + TICK
+
+    def wait(self, now: float) -> float:
+        """Seconds until the next thing is due."""
+        return max(0.0, min([self.next_poll, self.next_roll] + ([self.next_tick] if self.queue else [])) - now)
+
+    def due(self, now: float, look) -> bool:
+        """Do what is due by `now`; look() gives the tabs' rows (None: the last ones are kept).
+        True when the bubble must be drawn again."""
+        self._new_move(now)
+        if self.queue and now >= self.next_tick:
+            self.step()
+            self.next_tick = now + TICK
+        if now >= self.next_roll:
+            self.next_roll = now + 1.0
+            self.roll()
+        changed = False
+        if now >= self.next_poll:
+            self.next_poll = now + POLL
+            rows = look()
+            changed = self.refresh(self.tabs if rows is None else rows)
+        self._new_move(now)
+        return changed
 
     def frame(self) -> str:
         return self.queue[0][0] if self.queue else self.rest()
@@ -781,8 +923,12 @@ class Helper:
             if not item.get("hideable"):
                 self.notice = "This one is about your tabs, so it stays."
                 return ""
-            hide(self.state, item["key"])
-            self.items = suggestions(self.tabs, self.now(), self.state, self.conf, load_hidden(self.state))
+            try:
+                hide(self.state, item["key"])
+            except OSError:                            # (a read-only state folder): it stays
+                self.notice = "Not saved: I couldn't write to the state folder, so it may come back."
+                return ""
+            self.items = self.suggest()
             self.sel = min(self.sel, len(self.items) - 1)
             self.notice = "Got it: I won't suggest that one again."
             self.play("nod")
@@ -809,13 +955,21 @@ def _winsize(fd: int) -> tuple:
     return cols, rows, (xp // cols if xp and cols else 10), (yp // rows if yp and rows else 20)
 
 
+def look_at_tabs():
+    """The tabs' rows now, or None when kitty can't be asked (the helper then goes on with the
+    rows it has, so the greeting and the day's lines still change, at midnight say)."""
+    rows, data = read_tabs()
+    return rows if data is not None else None
+
+
 def panel(conf: str, state: str) -> int:
     import select
     import signal
     import termios
     import tty
     tabs, data = read_tabs()
-    if toggle_off_others(data):
+    toggled, notice = toggle_off_others(data)
+    if toggled:
         return 0
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
@@ -824,6 +978,7 @@ def panel(conf: str, state: str) -> int:
     # the alternate screen (from a shell, the screen comes back as it was), no cursor, clicks
     out.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h")
     h = Helper(out, conf, state)
+    h.notice = notice
     resized = [True]
     wake_r, wake_w = os.pipe()                       # a resize wakes the wait at once
     os.set_blocking(wake_w, False)
@@ -848,7 +1003,7 @@ def panel(conf: str, state: str) -> int:
     result = ""
     try:
         h.refresh(tabs)
-        next_poll = next_roll = time.monotonic() + POLL
+        h.start_clocks(time.monotonic())
         while True:
             if resized[0]:
                 resized[0] = False
@@ -857,15 +1012,10 @@ def panel(conf: str, state: str) -> int:
             else:
                 h.draw_cat()
             out.flush()
-            now = time.monotonic()
-            wait = min(next_poll, next_roll) - now
-            if h.queue:
-                wait = min(wait, TICK)
-            ready = select.select([fd, wake_r], [], [], max(0.0, wait))[0]
+            ready = select.select([fd, wake_r], [], [], h.wait(time.monotonic()))[0]
             if wake_r in ready:
                 os.read(wake_r, 64)
-                continue
-            if ready:
+            if fd in ready:                            # one batch of keys, then the clocks (below)
                 chunk = os.read(fd, 4096).decode("utf-8", "ignore")
                 while PARTIAL_RE.search(chunk) and select.select([fd], [], [], 0.05)[0]:
                     more = os.read(fd, 4096).decode("utf-8", "ignore")
@@ -880,17 +1030,9 @@ def panel(conf: str, state: str) -> int:
                         h.draw()
                 if result:
                     break
-                continue
-            h.step()
-            now = time.monotonic()
-            if now >= next_roll:
-                next_roll = now + 1.0
-                h.roll()
-            if now >= next_poll:
-                next_poll = now + POLL
-                new, _ = read_tabs()
-                if new and h.refresh(new):
-                    h.draw()
+            # (also while keys keep coming, a held arrow: the tabs are still looked at, moves still play)
+            if h.due(time.monotonic(), look_at_tabs):
+                h.draw()
     finally:
         restore()
     if result.startswith("focus:"):
