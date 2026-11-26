@@ -80,7 +80,7 @@ while IFS= read -r b; do
   [ -n "$b" ] || continue
   echo "  keep    ${b#"$DEST"/}   (an older .wav install.sh replaced: delete it if you don't need it)"; kept=$((kept + 1))
 done < <(find "$DEST/sounds" -maxdepth 1 -type f -name '*.wav.bak-[0-9]*' 2>/dev/null | sort)
-[ "$DRY" = 1 ] || rmdir "$DEST/sounds" 2>/dev/null || true
+[ "$DRY" = 1 ] || { rmdir "$DEST/cat/96" "$DEST/cat/192" "$DEST/cat/384" "$DEST/sounds" 2>/dev/null; rmdir "$DEST/cat" 2>/dev/null; } || true
 
 if [ "$DRY" = 1 ]; then
   echo "Dry run: $removed file(s) would be removed, $restored put back from a backup, $kept kept. Nothing was touched."
@@ -89,7 +89,7 @@ fi
 echo "$removed file(s) removed, $restored put back from a backup, $kept kept."
 echo "Left alone (delete them if you like):"
 echo "  switches in $DEST (sounds-off, sounds-volume, sounds-classic, cat-off, quests-off, tips-off, buttons-off, full-commands)"
-echo "  quest progress: ${NINELIVES_STATE:-$HOME/.local/state/ninelives}"
+echo "  quest progress and the helper cat's \"don't suggest\" list: ${NINELIVES_STATE:-$HOME/.local/state/ninelives}"
 echo "  restart log and session: ${XDG_CACHE_HOME:-$HOME/.cache}/ninelives"
 echo "  the tips.sh line in ~/.bashrc or ~/.zshrc (harmless once tips.sh is gone)"
 echo "Restart kitty to finish (the running one keeps the old sidebar until it closes)."

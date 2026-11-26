@@ -508,6 +508,54 @@ class NarrowSidebar(TabBarCase):
         self.assertIsNone(self.tb._region(tm, 100, 45))
 
 
+class HelperCat(TabBarCase):
+    """A click on the cat at the end of "+ New tab" opens the helper cat (cat-helper.py), like ⚙
+    opens the settings: per kitty window, only on its first line, and not when the cat is hidden."""
+    def bar(self, row=10):
+        R = types.SimpleNamespace
+        ext = [R(tab_id=-1, y=R(start=row, end=row + 1))]
+        return R(window_geometry=R(left=0, right=310, top=0, bottom=800), cell_width=10, cell_height=20,
+                 tab_extents=ext)
+
+    def test_a_click_on_the_cat_is_the_helper(self):
+        tb = self.tb
+        line = tb._visible(tb._new_tab_label(30, wid=1)).split("\n")[0]
+        at = line.index("=")
+        self.assertEqual(tb._cat_cols_for(1), (at - 1, 30))
+        tm = types.SimpleNamespace(tab_bar=self.bar(), active_tab=None, os_window_id=1)
+        y = 10 * 20 + 5
+        self.assertEqual(tb._region(tm, (at + 2) * 10 + 5, y), ("button", "cat"))
+        self.assertEqual(tb._region(tm, (at - 1) * 10 + 5, y), ("button", "cat"))      # a cell before it
+        self.assertIsNone(tb._region(tm, 45, y))                                       # "+ New tab": kitty's
+        self.assertIsNone(tb._region(tm, (at + 2) * 10 + 5, y + 20))                   # the quest line
+        # another kitty window with a narrow sidebar has the cat elsewhere (or nowhere)
+        tb._new_tab_label(12, wid=2)
+        self.assertIsNone(tb._cat_cols_for(2))
+        self.assertIsNone(tb._region(types.SimpleNamespace(tab_bar=self.bar(), active_tab=None, os_window_id=2),
+                                     (at + 2) * 10 + 5, y))
+        self.assertEqual(tb._cat_cols_for(1), (at - 1, 30))
+
+    def test_kitty_cat_off_leaves_no_click_target(self):
+        open(self.kitty_path("cat-off"), "w").close()
+        tb = self.tb
+        tb._new_tab_label(30, wid=1)
+        self.assertIsNone(tb._cat_cols_for(1))
+        tm = types.SimpleNamespace(tab_bar=self.bar(), active_tab=None, os_window_id=1)
+        self.assertIsNone(tb._region(tm, 255, 205))
+
+    def test_the_click_runs_the_helper_and_earns_no_badge(self):
+        tb = self.tb
+        self.assertIn("cat-helper.py", tb.ACTIONS["cat"])
+        self.assertIn("--type=overlay", tb.ACTIONS["cat"])
+        tb._quest_action("launch", tb.ACTIONS["cat"].split()[1:])       # as if from a key: no quest
+        self.assertEqual(tb._earned, {})
+
+    def test_the_key_in_kitty_conf_runs_the_same(self):
+        with open(os.path.join(HERE, "..", "config", "kitty.conf"), encoding="utf-8") as f:
+            line = next(l for l in f.read().splitlines() if l.startswith("map ctrl+alt+c "))
+        self.assertEqual(line.split(None, 2)[2].strip(), self.tb.ACTIONS["cat"])
+
+
 class NoCuts(TabBarCase):
     """Our own lines take a shorter wording instead of a word cut in half (or cut off silently)."""
     def states(self):

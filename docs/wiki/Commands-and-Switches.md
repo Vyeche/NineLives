@@ -40,6 +40,7 @@ running an older `tab_bar.py` than the installed one, which means a restart is d
 | --- | --- | --- |
 | `ninelives` | every setting below at a glance | |
 | `ninelives settings`, **Ctrl+Shift+F2**, **⚙** | the settings list: change them with the arrow keys | |
+| `ninelives cat`, **Ctrl+Alt+C**, a click on the sidebar's cat | ask the cat: what needs you, today's quest, a tip of the day (see [The cat](The-Cat#ask-the-cat)) | `cat-helper-hidden` in the state folder: what you said not to suggest again |
 | `kitty-sounds` | play each sound with its meaning | |
 | `kitty-sounds volume N` | tab sound volume, 5–100 % | `sounds-volume` |
 | `kitty-sounds off` / `on`, **Ctrl+Alt+M** | mute / unmute | `sounds-off` |
@@ -55,7 +56,7 @@ Changes show up within a moment; nothing needs a restart.
 ## Environment
 | Variable | Does |
 | --- | --- |
-| `NINELIVES_STATE` | where quest progress lives (default `~/.local/state/ninelives`) |
+| `NINELIVES_STATE` | where quest progress lives, and what the cat shouldn't suggest again (default `~/.local/state/ninelives`) |
 | `NINELIVES_QUIET` | set: no desktop notifications (the dev and test kittys use it) |
 | `KITTY_CONFIG_DIRECTORY` | where `install.sh` installs (default `~/.config/kitty`) |
 | `NL_KEEP_BACKUPS` | how many backups of each file `install.sh` keeps (default 3, or `all`) |

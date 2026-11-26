@@ -47,7 +47,7 @@ if not.
 | --- | --- |
 | `TabManager.handle_tab_bar_mouse` | drag tabs inside the sidebar on Wayland (COSMIC ignores kitty's compositor drag) |
 | `TabBar.update_vertical` | the gap row under a tab belongs to that tab, for clicks and drags |
-| `TabManager.tab_bar_data` | the search field and buttons on top; "+ New tab" label, the cat, the quest line |
+| `TabManager.tab_bar_data` | the search field and buttons on top; "+ New tab" label, the cat (a click on it opens the helper cat), the quest line |
 | `Boss.dispatch_action` | notice shortcuts for quests |
 | drag image functions | the high-contrast drag card (X11) |
 
@@ -69,6 +69,7 @@ written atomically to `~/.local/state/ninelives/`.
 | `config/command_title.py` | which titles are a running command's command line (compared with the command the shell reported to kitty, `last_cmd_cmdline`) and their short form (`git push`); `tab_bar.py`, `tab-finder.py` and `scripts/kitty-tabs.py` all use it, and `full-commands` turns it off |
 | `config/tab-finder.py` | the tab search box (Ctrl+Shift+Space) and the jump to the waiting tab (Ctrl+Alt+U) |
 | `config/settings.py` | the settings list (Ctrl+Shift+F2, the sidebar's ⚙, `ninelives settings`): one row per setting, written to the same switch files the `kitty-*` commands use |
+| `config/cat-helper.py`, `config/cat/` | the helper cat (Ctrl+Alt+C, a click on the sidebar's cat, `ninelives cat`): an overlay that shows the drawn cat with kitty's graphics protocol (each pose sent once as a PNG, then swapped in place; never `\e[2J`, which would free the poses kitty keeps) and a bubble drawn in cells. It reads the tabs as the search box does (`tab-finder.py`'s rows, `kitty @ ls` once a second while open) and quests from `quests.txt` |
 | `config/tips.sh` | prompt tips and the `kitty-*` commands |
 | `config/sounds/*.oga` | sounds, built by `scripts/make-sounds.py` |
 | `scripts/install.sh` | install with backups and a config check |
@@ -76,6 +77,7 @@ written atomically to `~/.local/state/ninelives/`.
 | `scripts/kitty-relaunch.sh` | restart kitty and reopen every tab (finds kitty by its remote-control socket: the one it runs in, else the only one) |
 | `scripts/kitty-tabs.py` | reads `kitty @ ls` for the relaunch: how to bring each tab back, which tabs are busy; and which kitty sockets there are |
 | `scripts/make-sounds.py` | builds the sounds from scratch |
+| `scripts/make-cat.py` | draws the helper cat's poses (`config/cat/<size>/<pose>.png`) with pycairo, as small palette PNGs; `--sheet FILE` makes a contact sheet |
 | `tests/` | unit tests, no kitty needed (see [Testing](Testing)) |
 | `scripts/check.sh` | every check in one command, see [Testing](Testing) |
 | `scripts/check-macos.sh`, `tests/live_agent_lookup.py` | the macOS checks (the Gauntlet's macOS lane), and the agent lookup against real processes with kitty's own Python |

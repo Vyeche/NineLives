@@ -38,8 +38,9 @@ k() { local pad=$((25 - ${#1})); ((pad < 1)) && pad=1; printf ' %s%s%s%s%*s' "$(
 s() { local vis="$2 $3" pad; pad=$((25 - ${#vis})); printf '   \e[3%sm%s%s %s%s%s%*s' "$1" "$2" "$R" "$B" "$3" "$R" "$pad" ""; d "$4"; }
 sheet() {
 printf ' %skitty shortcuts%s  %s(F1 or Ctrl+Shift+/ shows this; scroll, q closes)%s\n' "$B" "$R" "$D" "$R"
+# (11 %s, 11 arguments: one more and printf would run the format again, a second "earned ()" line)
 [ -n "${QUESTS:-}" ] && printf ' %s★%s %squest: use it once for its badge   %s\e[32m✓%s %searned (%s)   %s✪%s %s10 uses: mastered%s\n' \
-  "$A" "$R" "$D" "$R" "$R" "$D" "$PROGRESS" "$R" "$A" "$R" "$D" "$R"
+  "$A" "$R" "$D" "$R" "$R" "$D" "$PROGRESS" "$A" "$R" "$D" "$R"
 h "Tabs"
 k "Ctrl+Shift+T"            "New tab in the current folder"
 k "Ctrl+Shift+W"            "Close tab (asks if something is running)"
@@ -72,6 +73,7 @@ k "Ctrl+Shift+N"            "New kitty window"
 k "Ctrl+Shift+F11"          "Full screen"
 k "Ctrl+Shift+F5"           "Reload settings (kitty.conf)"
 k "Ctrl+Shift+F2"           "NineLives settings: ↑/↓ choose, Enter changes (last row: kitty.conf in your editor)"
+k "Ctrl+Alt+C"              "The helper cat: what needs you (Enter goes there), today's quest, a tip of the day; →/← more, d hides one, Esc closes. Or click the cat by + New tab"
 h "Handy extras"
 k "Ctrl+Shift+Z / X"        "Jump to previous / next command prompt" prompts
 k "Ctrl+Shift+G"            "Show the last command's output in a pager" output
@@ -90,6 +92,7 @@ k "=^.^=  =O.O= !"           "The cat by + New tab: the whole window at a glance
 k "Ctrl+Alt+M"              "Mute / unmute the sounds (kitty-sounds plays each one)" mute
 h "Learn as you go"
 k "ninelives"               "Every NineLives setting at a glance (ninelives settings: change them in a list)"
+k "ninelives cat"           "Ask the cat: the helper cat in this tab (Ctrl+Alt+C)"
 k "kitty-quests"            "Quests + badges: use a shortcut once to earn it (off / on)"
 k "kitty-tips"              "Show a random tip (kitty-tips all / off / on)"
 k "kitty-sounds"            "Hear each sound (volume 5-100 / classic / off / on)"

@@ -189,6 +189,16 @@ class Status(TipsCase):
         self.assertIn("The cat: hidden", out)
         self.assertIn("ninelives settings", self.sh("ninelives"))      # the summary says where
 
+    def test_ninelives_cat_asks_the_cat(self):
+        # (no terminal here, so cat-helper.py prints what it would say instead of opening)
+        for f in ("cat-helper.py", "tab-finder.py", "command_title.py"):
+            shutil.copy(os.path.join(HERE, "..", "config", f), self.conf)
+        out = self.sh("ninelives cat")
+        self.assertRegex(out, r"Hello: Good (morning|afternoon|evening|night)! It's ")
+        self.assertIn("Joke of the day: ", out)
+        self.assertIn("ninelives cat", self.sh("ninelives"))           # the summary says how
+        self.assertIn("usage: ninelives [settings | cat]", self.sh("ninelives nope; true"))
+
     def test_ninelives_columns_line_up(self):
         out = self.sh("ninelives")
         rows = [l for l in out.splitlines() if re.match(r"  (sounds|cat|quests|buttons|commands|tips) ", l)]
@@ -287,6 +297,16 @@ class ShortcutSheet(TipsCase):
         self.assertTrue(self.line(out, "Ctrl+Shift+R ").startswith(" ★ "))
         self.assertTrue(self.line(out, "Ctrl+Shift+T ").startswith("   "))     # not a quest
         self.assertIn("1/16", out)
+        self.assertEqual(out.count("earned ("), 1)       # the key to the marks, once (printf reran it)
+        self.assertIn("earned (1/16)", out)
+
+    def test_the_marks_key_is_coloured_as_the_marks(self):
+        env = {"HOME": self.tmp.name, "KITTY_CONFIG_DIRECTORY": self.conf, "NINELIVES_STATE": self.state,
+               "PATH": "/usr/bin:/bin", "LANG": LANG, "TERM": "dumb", "COLUMNS": "100"}
+        out = subprocess.run(["bash", self.SHEET], env=env, capture_output=True, text=True, timeout=30).stdout
+        key = next(l for l in out.splitlines() if "earned (" in l)
+        self.assertIn("\x1b[33m✪\x1b[0m", key)            # gold, like a mastered shortcut's mark
+        self.assertTrue(key.endswith("mastered\x1b[0m"), repr(key))
 
     def test_a_mac_note_only_on_a_mac(self):
         self.assertIn("On a Mac, Alt is Option", self.sheet("darwin23"))
