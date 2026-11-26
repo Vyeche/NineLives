@@ -21,7 +21,7 @@ skip() { printf '  \e[2mskip  %s\e[0m\n' "$1"; }
 echo "Syntax"
 if out="$(PYTHONDONTWRITEBYTECODE=1 python3 - <<'EOF' 2>&1
 import ast, sys
-for f in ("config/tab_bar.py", "config/tab-finder.py", "config/settings.py", "config/command_title.py", "scripts/make-sounds.py", "scripts/vmouse.py", "tests/live_agent_lookup.py"):
+for f in ("config/tab_bar.py", "config/tab-finder.py", "config/settings.py", "config/command_title.py", "config/cat-helper.py", "scripts/make-sounds.py", "scripts/make-cat.py", "scripts/vmouse.py", "tests/live_agent_lookup.py"):
     ast.parse(open(f, encoding="utf-8").read(), f)
 EOF
 )"; then ok "python parses"; else fail "python: $out"; fi
@@ -30,7 +30,7 @@ bad=""; for f in config/*.sh scripts/*.sh; do bash -n "$f" 2>/dev/null || bad="$
 
 echo "Unit tests"
 if out="$(PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests 2>&1)"; then
-  ok "$(grep -oE 'Ran [0-9]+ tests?' <<< "$out") (tab_bar.py against a fake kitty; kitty-tabs.py; settings.py; tips.sh)"
+  ok "$(grep -oE 'Ran [0-9]+ tests?' <<< "$out") (tab_bar.py against a fake kitty; kitty-tabs.py; settings.py; cat-helper.py; tips.sh)"
 else fail "unit tests: $(grep -E '^(FAIL|ERROR):' <<< "$out" | head -5 | tr '\n' ' ')"; fi
 
 echo "Install"
@@ -42,7 +42,7 @@ if command -v kitty >/dev/null; then
     ok "installs into a temp folder; kitty's config check passes"
   else fail "install: $(tail -3 <<< "$out")"; fi
   n="$(find config -type f ! -path '*/__pycache__/*' | wc -l)"; m="$(find "$TMP/inst" -type f ! -name '*.bak-*' ! -name '*.wav' | wc -l)"   # (.wav: made on macOS)
-  [ "$n" = "$m" ] && ok "every config file installed ($n, sounds included)" || fail "installed $m of $n files"
+  [ "$n" = "$m" ] && ok "every config file installed ($n, sounds and the cat's frames included)" || fail "installed $m of $n files"
 else skip "kitty not found"; fi
 
 echo "Sounds"
@@ -59,6 +59,28 @@ if command -v ffmpeg >/dev/null; then
   done
   [ -z "$loud" ] && ok "loudness on target (subtle; needs-you a little louder)" || fail "loudness off target:$loud"
 else skip "ffmpeg not found: loudness"; fi
+
+echo "The cat's frames"
+# (scripts/make-cat.py draws them; the helper shows them with kitty's graphics protocol)
+if out="$(python3 - <<'EOF'
+import os, struct
+frames = ("idle", "blink", "wink", "ear", "tail-left", "tail-right", "look-left", "look-right", "nod",
+          "hop-low", "hop", "wave", "surprised", "happy", "sleepy")
+bad, total = [], 0
+for size in (96, 192):
+    for f in frames:
+        p = f"config/cat/{size}/{f}.png"
+        try:
+            head = open(p, "rb").read(24)
+        except OSError:
+            bad.append(p + " missing"); continue
+        total += os.path.getsize(p)
+        if head[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", head[16:24]) != (size, size) or os.path.getsize(p) > 8000:
+            bad.append(p)
+print(" ".join(bad) if bad else f"ok {total // 1024}")
+EOF
+)" && [ "${out%% *}" = ok ]; then ok "all 30 frames there, PNGs of the right size, ${out#ok } KB in all"
+else fail "cat frames: $out"; fi
 
 echo "Docs"
 if out="$(python3 - <<'EOF'
@@ -138,6 +160,44 @@ print(sum(1 for o in json.load(sys.stdin) for t in o["tabs"] for w in t["windows
     if shot="$(bash scripts/test-kitty.sh shot check)" && cp "$shot" "${TMPDIR:-/tmp}/ninelives-check.png"; then
       ok "sidebar screenshot: ${TMPDIR:-/tmp}/ninelives-check.png"
     else fail "screenshot"; fi
+    # The helper cat (Ctrl+Alt+C, or a click on the sidebar's cat): an overlay with the drawn cat
+    # (kitty's graphics protocol) and a bubble about the waiting tab. The cat's ginger fur is looked
+    # for right of the sidebar in full screenshots: none before, plenty while it's open, none after.
+    helpers() { bash scripts/test-kitty.sh k ls 2>/dev/null | python3 -c 'import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("ch", "config/cat-helper.py"); ch = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ch)
+print(sum(1 for o in json.load(sys.stdin) for t in o["tabs"] for w in t["windows"] if ch._is_helper(w.get("cmdline") or [])))'; }
+    fur() {  # fur NAME: how many pixels right of the sidebar are the cat's fur colour (#f2a14f)
+      local px cw cols; read -r _ px _ cw _ cols <<< "$(grep '^cells: ' "$NL_TEST_DIR/state/sidebar.txt")"
+      px=$(( ${px:-0} + ${cw:-10} * ${cols:-31} ))
+      bash scripts/test-kitty.sh shot "$1" null >/dev/null 2>&1
+      ffmpeg -loglevel error -i "$NL_TEST_DIR/shots/$1.png" -vf "crop=iw-$px:ih:$px:0" -f rawvideo -pix_fmt rgb24 - 2>/dev/null \
+        | python3 -c 'import sys; d = sys.stdin.buffer.read()
+print(sum(1 for i in range(0, len(d) - 2, 3) if abs(d[i] - 242) < 24 and abs(d[i + 1] - 161) < 24 and abs(d[i + 2] - 79) < 24))'; }
+    cat_key() { bash scripts/test-kitty.sh k action "$(sed -n 's/^map ctrl+alt+c *//p' config/kitty.conf)" >/dev/null 2>&1; sleep 2; }
+    f0="$(fur helper-0)"; cat_key; h1="$(helpers)"; f1="$(fur helper-1)"
+    what="$(sed -n 's/^showing: //p' "$NL_TEST_DIR/state/cat-helper.txt" 2>/dev/null)"
+    cat_key; h2="$(helpers)"; f2="$(fur helper-2)"
+    if [ "$h1" = 1 ] && [ "$h2" = 0 ] && [ "${f0:-1}" -lt 50 ] && [ "${f1:-0}" -gt 3000 ] && [ "${f2:-1}" -lt 50 ] \
+        && [[ "$what" == "1/"*" waiting waiting:"* ]]; then
+      ok "Ctrl+Alt+C opens the helper cat (drawn: $f1 fur pixels; about the waiting tab), and closes it again"
+    else fail "helper cat key: open $h1 → $h2, fur pixels $f0 → $f1 → $f2, showing '$what'"; fi
+    # a click on the sidebar's cat opens it; Enter goes to the waiting tab (7) and it closes; a
+    # click opens it there, and a second click closes it
+    read -r cx cy <<< "$(btn cat)"
+    python3 scripts/xclick.py "${NL_TEST_DISPLAY:-:97}" "${cx:-0}" "${cy:-0}" >/dev/null 2>&1; sleep 2
+    c1="$(helpers)"
+    bash scripts/test-kitty.sh k send-text --match state:focused $'\r' >/dev/null 2>&1; sleep 1.5
+    c2="$(helpers)"
+    act="$(bash scripts/test-kitty.sh k ls 2>/dev/null | python3 -c 'import json,sys; print([i+1 for i,t in enumerate(json.load(sys.stdin)[0]["tabs"]) if t["is_active"]])')"
+    python3 scripts/xclick.py "${NL_TEST_DISPLAY:-:97}" "${cx:-0}" "${cy:-0}" >/dev/null 2>&1; sleep 2
+    c3="$(helpers)"
+    python3 scripts/xclick.py "${NL_TEST_DISPLAY:-:97}" "${cx:-0}" "${cy:-0}" >/dev/null 2>&1; sleep 1.5
+    c4="$(helpers)"
+    if [ -n "$cx" ] && [ "$c1" = 1 ] && [ "$c2" = 0 ] && [ "$act" = "[7]" ] && [ "$c3" = 1 ] && [ "$c4" = 0 ]; then
+      ok "a click on the sidebar's cat opens the helper, Enter goes to the waiting tab, a second click closes it"
+    else fail "helper cat click at ${cx:-?},${cy:-?}: open $c1, after Enter $c2 (active tab $act), click $c3, again $c4"; fi
+    bash scripts/test-kitty.sh k focus-tab --match index:0 >/dev/null 2>&1; sleep 0.5
     # a short window (after the screenshot: focusing tabs clears their ✓ and ● marks): the waiting
     # tab (7), the active one (11) and "+ New tab" must stay in view
     bash scripts/test-kitty.sh k focus-tab --match index:10 >/dev/null 2>&1

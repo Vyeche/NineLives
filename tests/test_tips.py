@@ -189,6 +189,16 @@ class Status(TipsCase):
         self.assertIn("The cat: hidden", out)
         self.assertIn("ninelives settings", self.sh("ninelives"))      # the summary says where
 
+    def test_ninelives_cat_asks_the_cat(self):
+        # (no terminal here, so cat-helper.py prints what it would say instead of opening)
+        for f in ("cat-helper.py", "tab-finder.py", "command_title.py"):
+            shutil.copy(os.path.join(HERE, "..", "config", f), self.conf)
+        out = self.sh("ninelives cat")
+        self.assertRegex(out, r"Hello: Good (morning|afternoon|evening|night)! It's ")
+        self.assertIn("Joke of the day: ", out)
+        self.assertIn("ninelives cat", self.sh("ninelives"))           # the summary says how
+        self.assertIn("usage: ninelives [settings | cat]", self.sh("ninelives nope; true"))
+
     def test_ninelives_columns_line_up(self):
         out = self.sh("ninelives")
         rows = [l for l in out.splitlines() if re.match(r"  (sounds|cat|quests|buttons|commands|tips) ", l)]

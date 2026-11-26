@@ -48,6 +48,7 @@ There, `★` marks a quest shortcut you haven't used yet and a green `✓` one y
 | **Ctrl+Shift+F2** (or **⚙** in the sidebar) | NineLives settings: ↑/↓ choose, Enter or ←/→ change, Esc closes; the last row opens kitty.conf in your editor |
 | **Ctrl+Shift+A** then **M / L / 1** | more / less see-through / solid |
 | **Ctrl+Alt+M** | mute / unmute the tab sounds |
+| **Ctrl+Alt+C** (or click the cat by **+ New tab**) | ask the cat: what needs you (Enter goes there), today's quest, a tip, joke and word of the day; →/← more, d hides one, Esc closes ([The cat](The-Cat#ask-the-cat)) |
 | **F1** | this list |
 
 ## Kittens (type in any tab)
@@ -57,6 +58,6 @@ colour themes, `kitten ssh host` keeps kitty features over SSH.
 ## On a Mac
 Not yet tried on a real Mac. kitty reads **Option as Alt** in its own shortcuts (whatever
 `macos_option_as_alt` is set to), so every Alt shortcut here is Option: **Ctrl+Option+→** splits,
-**Option+1** goes to tab 1, **Ctrl+Option+U** goes to the tab waiting for you. Function keys on a
+**Option+1** goes to tab 1, **Ctrl+Option+U** goes to the tab waiting for you, **Ctrl+Option+C** calls the cat. Function keys on a
 laptop may need **Fn** (Fn+F1), or use **Ctrl+Shift+/** for this sheet. The Ctrl+Shift shortcuts work
 as listed, and kitty's own ⌘ shortcuts (⌘T, ⌘W, ⌘C, ⌘V, …) keep working too.

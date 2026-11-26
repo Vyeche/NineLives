@@ -1364,7 +1364,7 @@ def _fit_own_rows(bar, data):
             if t.tab_id == SEARCH_ROW_ID:
                 t = t._replace(title=_search_row(width, wid) or t.title)
             elif t.tab_id < 0 and t.title != "+":    # kitty's bare + is left alone: no label patch
-                t = t._replace(title=_new_tab_label(width))
+                t = t._replace(title=_new_tab_label(width, wid))
             out.append(t)
         return tuple(out)
     except Exception:
@@ -1398,10 +1398,13 @@ BUTTONS_OFF = os.path.join(CONFIG_DIR, "buttons-off")
 _CONF_DIR_SH = '"${KITTY_CONFIG_DIRECTORY:-${XDG_CONFIG_HOME:-$HOME/.config}/kitty}'
 _FINDER = _CONF_DIR_SH + '/tab-finder.py"'
 _SETTINGS = _CONF_DIR_SH + '/settings.py"'
+_CAT_HELPER = _CONF_DIR_SH + '/cat-helper.py"'
 ACTIONS = {   # the same actions as the keys in kitty.conf
     "search": f"launch --type=overlay --allow-remote-control --title current sh -c 'exec python3 {_FINDER} search'",
     "waiting": f"launch --type=background --allow-remote-control sh -c 'exec python3 {_FINDER} waiting'",
     "settings": f"launch --type=overlay --allow-remote-control --title current sh -c 'exec python3 {_SETTINGS}'",
+    # the cat at the end of "+ New tab": the helper cat (cat-helper.py, Ctrl+Alt+C); again closes it
+    "cat": f"launch --type=overlay --allow-remote-control --title current sh -c 'exec python3 {_CAT_HELPER}'",
     "new": "new_tab_with_cwd",
     "close": "close_tab",
 }
@@ -1632,6 +1635,13 @@ def _cols_for(wid) -> list:
     return _buttons.get("cols_by", {}).get(wid) or _buttons.get("cols", ())
 
 
+def _cat_cols_for(wid):
+    """(first col, last col) of the cat at the end of "+ New tab" as last drawn in this kitty
+    window, or None (hidden with kitty-cat off, or no room for it)."""
+    by = _buttons.get("cat_by", {})
+    return by[wid] if wid in by else _buttons.get("cat")
+
+
 _clicking = {"on": False}
 
 
@@ -1676,6 +1686,11 @@ def _region(tm, x, y):
         return None
     if ext.tab_id == SEARCH_ROW_ID:
         return ("button", next((a for c0, c1, a in _cols_for(tm.os_window_id) if c0 <= col <= c1), "search"))
+    if ext.tab_id < 0 and row == ext.y.start:
+        cat = _cat_cols_for(tm.os_window_id)          # the cat at the end of "+ New tab": the helper
+        if cat and cat[0] <= col <= cat[1]:
+            return ("button", "cat")
+        return None
     at = tm.active_tab
     close_col = _buttons.get("close_cols", {}).get(at.id) if at is not None else None
     if (at is not None and ext.tab_id == at.id and close_col is not None and _buttons_on()
@@ -1774,6 +1789,10 @@ def _note_layout(bar, data, shown_ids, hidden) -> None:
         if top is not None:                         # where the search row's buttons are (check.sh)
             for c0, c1, name in _cols_for(wid):
                 text += f"button {name}: {px((c0 + c1) // 2 if name == 'search' else c0 + 1, top.y.start)}\n"
+        new = next((e for e in bar.tab_extents if e.tab_id < 0 and e.tab_id != SEARCH_ROW_ID), None)
+        cat = _cat_cols_for(wid)
+        if new is not None and cat:                 # the cat at the end of "+ New tab" (the helper)
+            text += f"button cat: {px(cat[0] + 3, new.y.start)}\n"
         at = next((t.tab_id for t in data if t.tab_id > 0 and t.is_active), None)
         close_col = _buttons.get("close_cols", {}).get(at)
         crow = _buttons.get("close_row", {}).get(wid, -1)
@@ -2076,11 +2095,13 @@ def _visible(s: str) -> str:
 NEW_TAB_LABELS = (NEW_TAB_LABEL, "  +   New", "  +")   # shorter ones for a narrow sidebar
 
 
-def _new_tab_label(width=None) -> str:
+def _new_tab_label(width=None, wid=None) -> str:
     """ "+ New tab" with the cat at its right end, and under it the next quest (or the badge
-    just earned), both fitted to `width` cells (the sidebar's; ROW_WIDTH if not known)."""
+    just earned), both fitted to `width` cells (the sidebar's; ROW_WIDTH if not known). Where the
+    cat went is kept for clicks (a click on it opens the helper cat), per kitty window `wid`."""
     width = width or ROW_WIDTH
     line1, line2 = next((l for l in NEW_TAB_LABELS if _cells(l) <= width), ""), ""
+    where = None
     try:
         cat = _cat_face()
         _cat["drawn"] = cat
@@ -2094,8 +2115,13 @@ def _new_tab_label(width=None) -> str:
             label = next((l for l in NEW_TAB_LABELS if _cells(l) + 2 <= at), None)
             if label is not None:
                 line1 = label + " " * (at - _cells(label)) + cat
+                where = (at - 1, width)               # a cell before the face, to the row's end
     except Exception:
         pass
+    if wid is None:
+        _buttons["cat"] = where
+    else:
+        _buttons.setdefault("cat_by", {})[wid] = where
     try:
         line2 = _quest_line(width)
     except Exception:

@@ -72,6 +72,7 @@ k "Ctrl+Shift+N"            "New kitty window"
 k "Ctrl+Shift+F11"          "Full screen"
 k "Ctrl+Shift+F5"           "Reload settings (kitty.conf)"
 k "Ctrl+Shift+F2"           "NineLives settings: ↑/↓ choose, Enter changes (last row: kitty.conf in your editor)"
+k "Ctrl+Alt+C"              "The helper cat: what needs you (Enter goes there), today's quest, a tip of the day; →/← more, d hides one, Esc closes. Or click the cat by + New tab"
 h "Handy extras"
 k "Ctrl+Shift+Z / X"        "Jump to previous / next command prompt" prompts
 k "Ctrl+Shift+G"            "Show the last command's output in a pager" output
@@ -90,6 +91,7 @@ k "=^.^=  =O.O= !"           "The cat by + New tab: the whole window at a glance
 k "Ctrl+Alt+M"              "Mute / unmute the sounds (kitty-sounds plays each one)" mute
 h "Learn as you go"
 k "ninelives"               "Every NineLives setting at a glance (ninelives settings: change them in a list)"
+k "ninelives cat"           "Ask the cat: the helper cat in this tab (Ctrl+Alt+C)"
 k "kitty-quests"            "Quests + badges: use a shortcut once to earn it (off / on)"
 k "kitty-tips"              "Show a random tip (kitty-tips all / off / on)"
 k "kitty-sounds"            "Hear each sound (volume 5-100 / classic / off / on)"

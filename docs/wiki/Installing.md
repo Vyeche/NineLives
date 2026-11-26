@@ -9,7 +9,7 @@ macOS is new and not yet tried on a real Mac: see [macOS](#macos) below.
 ```bash
 git clone https://github.com/Vyeche/NineLives.git && cd NineLives   # once
 bash scripts/install.sh --dry-run   # see what would change; touches nothing
-bash scripts/install.sh             # copy config/ (and config/sounds/) into ~/.config/kitty
+bash scripts/install.sh             # copy config/ (with sounds/ and cat/) into ~/.config/kitty
 ```
 After the first install, **close kitty and open it again once**: the sidebar's patches and the
 remote-control socket (below) only load when kitty starts. To update later: `git pull`, then

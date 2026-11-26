@@ -36,6 +36,7 @@ _kitty_tips=(
   "Ctrl+Shift+F2 (or ⚙ at the top of the sidebar) opens the NineLives settings: ↑/↓ choose, Enter changes"
   "ninelives shows every NineLives setting at a glance; ninelives settings opens the list to change them"
   "The cat next to + New tab sums up every tab: =O.O= ! means one needs you (kitty-cat explains)"
+  "Click the cat at the end of + New tab (or press Ctrl+Alt+C) and it tells you what needs you, plus a tip of the day"
   "Sounds too loud? kitty-sounds volume 40 turns the tab sounds down (5-100)"
   "A tab you're looking at doesn't chime when it finishes: you can already see it"
   "A running command's tab shows just its program (git push), not its arguments; kitty-commands full shows it all"
@@ -119,7 +120,8 @@ kitty-cat() {
            "  =^▽^=✦     you earned a badge (gold; ♛ = new rank)" \
            "  =-.-= zZ   nothing happening for 3 minutes, or at night: napping (lavender)" \
            "  =^.^=      nothing going on (ginger): it blinks, winks, glances, flicks its tail" \
-           "kitty-cat off hides it, kitty-cat on brings it back.";;
+           "Click it (or Ctrl+Alt+C, or ninelives cat) and it comes out to tell you what needs you." \
+           "kitty-cat off hides it, kitty-cat on brings it back (Ctrl+Alt+C still calls it).";;
   esac
 }
 kitty-buttons() {
@@ -175,10 +177,12 @@ kitty-quests() {
 }
 ninelives() {  # every NineLives switch at a glance, and the command that changes it
   # ninelives settings: the settings list to change them in (Ctrl+Shift+F2 or ⚙ in the sidebar)
+  # ninelives cat: the helper cat (Ctrl+Alt+C, or click the cat at the end of "+ New tab")
   case "${1:-}" in
     settings|set) python3 "$_nl_conf/settings.py"; return;;
+    cat) python3 "$_nl_conf/cat-helper.py"; return;;
     "") ;;
-    *) echo "usage: ninelives [settings]"; return 2;;
+    *) echo "usage: ninelives [settings | cat]"; return 2;;
   esac
   local c="$_nl_conf" B=$'\e[1m' D=$'\e[37m' R=$'\e[0m' n=0 rank next="" vol snd
   _nl_row() { local pad=$((44 - ${#2})); ((pad < 1)) && pad=1   # pad by characters: ★ is 3 bytes
@@ -214,7 +218,7 @@ ninelives() {  # every NineLives switch at a glance, and the command that change
       $'\e[33m' "$R" "$B" "$R"
     printf '    %s(bash scripts/kitty-relaunch.sh --when-idle keeps every tab)%s\n' "$D" "$R"
   fi
-  printf '  %sChange them in a list: ninelives settings (or Ctrl+Shift+F2) · F1: every shortcut%s\n' "$D" "$R"
+  printf '  %sChange them in a list: ninelives settings (or Ctrl+Shift+F2) · F1: every shortcut · ninelives cat: ask the cat%s\n' "$D" "$R"
 }
 # one tip per new shell (sourced twice, e.g. by the dev kitty's rcfile, it stays quiet the 2nd time)
 [ -e "$_nl_conf"/tips-off ] || [ -n "${_NL_TIP_SHOWN:-}" ] || { kitty-tips; _NL_TIP_SHOWN=1; }

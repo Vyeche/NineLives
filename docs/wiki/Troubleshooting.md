@@ -26,6 +26,14 @@ command. Answer or finish those, or restart now without `--when-idle`.
 - `kitty-sounds` plays each sound; if that is silent too, check `paplay` and the system volume (on a Mac: `afplay ~/.config/kitty/sounds/done.wav`, and see [On a Mac](#on-a-mac)).
 - Sounds missing from `~/.config/kitty/sounds/`? Re-run `bash scripts/install.sh`. Without them it falls back to the desktop's sounds.
 
+### The cat's bubble shows, but no cat
+- The drawing comes from `~/.config/kitty/cat/`: if it's missing, re-run `bash scripts/install.sh`
+  (without it the bubble shows alone).
+- Run from a shell inside tmux or screen, or over plain ssh, `ninelives cat` can't draw: those don't
+  pass kitty's graphics protocol on. Ctrl+Alt+C opens it in kitty itself.
+- It says nothing about your tabs? It reads them over kitty's remote-control socket, which NineLives'
+  `kitty.conf` sets up from kitty's next start: restart kitty once after installing.
+
 ### Sounds too loud or too quiet
 `kitty-sounds volume 30` (or any 5–100). To change one sound, see [Sounds](Sounds#changing-a-sound).
 
