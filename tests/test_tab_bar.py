@@ -1054,10 +1054,10 @@ class CatMoves(TabBarCase):
 
     def test_reacts_to_what_happens(self):
         tb, now = self.tb, self.clock[0]
-        tb._cat["blocked"] = 1
+        tb._cat.update(blocked=1, waits=1)
         tb._cat_react()                                               # the first look: nothing new
         self.assertEqual(tb._cat["moves"], {})
-        tb._cat["blocked"] = 2                                        # another tab needs you
+        tb._cat.update(blocked=1, waits=2)                            # one stopped waiting as another began
         tb._cat_react()
         self.assertEqual(tb._cat["moves"], {"surprise": tb._frame})
         tb._cat.update(blocked=0, moves={}, done_at=now)              # one finished: hop, then wave

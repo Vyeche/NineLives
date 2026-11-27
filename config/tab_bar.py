@@ -123,7 +123,7 @@ _reminded: set = set()      # tab ids reminded (or looked at) since they started
 # The cat at the end of "+ New tab" sums up the whole window (kitty-cat off hides it).
 CAT_OFF = os.path.join(CONFIG_DIR, "cat-off")
 SLEEP_AFTER = 180.0         # nothing working or waiting this long: the cat dozes off
-_cat = {"blocked": 0, "fresh_block": False, "working": False, "done_at": -99.0, "error_at": -99.0,
+_cat = {"blocked": 0, "fresh_block": False, "working": False, "done_at": -99.0, "error_at": -99.0, "waits": 0,
         "quiet_since": time.monotonic(), "drawn": None,
         "moves": {}, "roll": 0, "seen": None}   # its moves: name -> start frame (see CAT_MOVES)
 _cat_rng = random.Random()  # the cat's dice (tests seed or replace it)
@@ -880,10 +880,12 @@ def _tick(timer_id=None) -> None:
                             elif state == "blocked":
                                 _blocked_since[tab.id] = now
                                 _cat["waiting_tab"] = tab.id
+                                _cat["waits"] += 1   # a new wait (one tab can start as another stops)
                                 _reminded.discard(tab.id)
                                 _play("blocked")
                             elif state == "error":
                                 _cat["error_at"] = now
+                                _cat["error_tab"] = tab.id
                                 _play("error", tab.id)
                             if state == "done" and prev == "working":
                                 _cat["done_at"] = now
@@ -911,6 +913,7 @@ def _tick(timer_id=None) -> None:
                     started = _running.pop(tab.id)
                     _start_sparkle(tab.id)
                     _cat["done_at"] = now
+                    _cat["done_tab"] = tab.id
                     if now - started >= LONG_JOB:
                         _note_done(now)
                         _play("done", tab.id)
@@ -2078,14 +2081,14 @@ def _cat_react() -> None:
     waits (that stare holds still, however long the wait), asleep or hidden. The face itself (_cat_mood) only reads what this left, so drawing it twice gives the
     same frame, and nothing is redrawn between moves."""
     try:
-        seen = (_cat["blocked"], _cat["done_at"], _cat["error_at"], _badge_shown.get("until", 0.0))
+        seen = _cat_seen()
         before = _cat["seen"]
         _cat["seen"] = seen
         moves = _cat["moves"]
         for name in [n for n, start in moves.items() if _frame - start >= _move_len(n)]:
             del moves[name]                       # finished
         if before is not None:                    # (the first look after loading reacts to nothing)
-            if seen[0] > before[0]:
+            if seen[0] > before[0]:              # (a count of new waits: only goes up)
                 _cat_start("surprise")
             if seen[1] != before[1]:
                 _cat_start("hop")
@@ -2971,7 +2974,8 @@ def _label_kind(mode) -> str:
 # -- after each sidebar redraw ------------------------------------------------------------------------
 def _cat_settle(bar, st) -> None:
     """The sidebar was just drawn: where the cat is now (the floor may have moved), its pictures put
-    back (the redraw took them off), its bubble too."""
+    back (the redraw took them off), its bubble too. (Runs inside kitty's redraw: nothing slow, no
+    files; a bubble that no longer fits how the cat is drawn is made again by _bubble_refit.)"""
     mode = st["mode"]
     wid = getattr(bar, "os_window_id", 0)
     _cat_modes[wid] = mode
@@ -3027,7 +3031,7 @@ def _cat_settle(bar, st) -> None:
             st["bubble"] = None
     if mode in DRAWN:
         _cat_place(bar, st, force=True)
-    _cat_note(bar, st)
+    # (cat.txt is written from the cat's timer, _cat_tick_one: no file I/O in kitty's redraw)
 
 
 def _visit_spot(bar, st, tab_id):
@@ -3190,7 +3194,7 @@ def _cat_ready(tm, bar, st) -> bool:
     st["loaded"], st["shown"] = (id(s), g["size"]), None
     b = st.get("bubble")
     if b is not None and b.get("image"):
-        b["sent"] = None                              # (a new Screen: the bubble's pictures again)
+        b["sent"] = None                              # (its pictures again, for this Screen: _bubble_refit)
     tm.mark_tab_bar_dirty()                           # drawn again, with the cat on it
     return True
 
@@ -3301,7 +3305,9 @@ def _cat_tick(now: float) -> None:
 
 
 def _cat_seen() -> tuple:
-    return (_cat["blocked"], _cat["done_at"], _cat["error_at"], _badge_shown.get("until", 0.0))
+    """What the cats react to: how many waits began (a count of new waits, not of the tabs waiting
+    now: one tab can start waiting in the same tick another stops), the last finish, error, badge."""
+    return (_cat["waits"], _cat["done_at"], _cat["error_at"], _badge_shown.get("until", 0.0))
 
 
 def _cat_tick_one(tm, bar, st, now: float) -> None:
@@ -3313,15 +3319,17 @@ def _cat_tick_one(tm, bar, st, now: float) -> None:
             _wake()
         if off != (mode == "off"):                   # kitty-cat off / on: lay the sidebar out again
             tm.mark_tab_bar_dirty()
+        _cat_note(bar, st)
         return
     seen, before = _cat_seen(), st["seen"]
     st["seen"] = seen
     if mode in DRAWN and not _cat_ready(tm, bar, st):
         return
+    _bubble_refit(tm, bar, st, now)
     asleep = _cat_base(now)[0] == "asleep"
     events = []
     if before is not None:
-        if seen[0] > before[0]:
+        if seen[0] > before[0]:                       # (a count of new waits: only goes up)
             events.append("waiting")
         if seen[1] != before[1]:
             events.append("done")
@@ -3451,7 +3459,8 @@ def _suggest(focused_wid) -> list:
     ch = _ch()
     import datetime
     return ch.suggestions(_tab_rows(focused_wid), datetime.datetime.now(), QUEST_DIR, CONFIG_DIR,
-                          ch.load_hidden(QUEST_DIR), first=_cat.get("waiting_tab"), vary=True)
+                          ch.load_hidden(QUEST_DIR), first=_cat.get("waiting_tab"), vary=True,
+                          recent={"done": _cat.get("done_tab"), "error": _cat.get("error_tab")})
 
 
 def _bubble_open(tm, bar, st, items, sel: int = 0, prompted: bool = True, sound: str = "") -> None:
@@ -3575,10 +3584,13 @@ def _cat_speak_up(tm, bar, st, events, now: float, force: bool = False) -> None:
     episode = {"waiting": round(_blocked_since.get(_cat.get("waiting_tab"), 0.0), 1),
                "done": round(_cat["done_at"], 1), "error": round(_cat["error_at"], 1),
                "badge": round(_badge_shown.get("until", 0.0), 1)}
+    news_tab = {"waiting": _cat.get("waiting_tab"), "done": _cat.get("done_tab"), "error": _cat.get("error_tab")}
     for ev in events:
         item = next((s for s in items if s["kind"] == ev), None)
         if item is None:
             continue
+        if ev in news_tab and item.get("action") != ("focus", news_tab[ev]):
+            continue                                  # (about another tab, not the one this news is about)
         item = dict(item, key=f"{item['key']}@{episode[ev]}")   # this event: said once, then never again
         if not _memory().fresh(item):
             continue
@@ -3706,7 +3718,51 @@ def _bubble_render(bar, st) -> bool:
         return False
     b["spec"], b["tails"] = spec, (tails[0][:2], tails[1][:2])
     b["sent"], b["placed"] = id(s), None
+    b["fit"] = _bubble_fit(bar, st)
     return True
+
+
+def _bubble_fit(bar, st):
+    """What a bubble picture was made for: the sidebar's Screen, the cat's size, the sidebar's width
+    and height. None while the cat isn't drawn (its frames not in this Screen at its size)."""
+    g = st.get("geom")
+    if st.get("mode") not in DRAWN or g is None or st.get("loaded") != (id(bar.screen), g["size"]):
+        return None
+    return (id(bar.screen), g["size"], g["width"], g["height"])
+
+
+def _bubble_refit(tm, bar, st, now: float) -> None:
+    """(From the cat's timer.) The open bubble still fits how the cat is drawn now: a picture made
+    again for a new Screen, frame size or sidebar width (the words said so far stay said); in cells
+    if the cat is text now, or the picture can't be made; closed if that fails too."""
+    b = st.get("bubble")
+    if b is None or not b.get("image"):
+        return
+    fit = _bubble_fit(bar, st)
+    if fit is not None and b.get("fit") == fit and b.get("sent") == id(bar.screen):
+        return
+    _bubble_unplace(bar, st)
+    old = b.get("reveal")
+    ok = False
+    if fit is not None:
+        try:
+            ok = _bubble_render(bar, st)
+        except Exception:
+            ok = False
+    if ok:
+        if old is not None:                           # the same moment in the line, its words re-wrapped
+            b["reveal"] = _nine().Reveal(b["spec"]["chars"], old.start, CHARS_PER_SECOND)
+            if not b["reveal"].done(now):
+                _timer_on("talk")
+        b["placed"] = None
+        if _cat_place(bar, st, force=True):
+            _wake()
+    else:
+        b["image"], b["reveal"], b["said_all"] = False, None, True     # cells: all of it at once
+        b["close_at"] = max(b["close_at"], now + (ASK_HOLD if b["prompted"] else SAY_HOLD))
+        b.pop("fit", None)
+        tm.mark_tab_bar_dirty()                       # (_cat_settle draws it in cells, or closes it)
+    _cat_note(bar, st)
 
 
 def _bubble_where(st) -> tuple:
@@ -3961,10 +4017,11 @@ def _bubble_do(tm, cmd) -> None:
                 tab = _tab_obj(act[1])
                 for m in get_boss().all_tab_managers:
                     if tab is not None and tab in list(m):
-                        if m is tm:
+                        w = getattr(tab, "active_window", None)
+                        if m is tm or w is None:
                             m.set_active_tab(tab)
-                        else:
-                            get_boss().set_active_tab(tab)
+                        else:                         # another kitty window: as kitty @ focus-tab does it
+                            get_boss().set_active_window(w, switch_os_window_if_needed=True)
                         break
             elif act[0] == "help":
                 get_boss().combine(ACTIONS["help"])

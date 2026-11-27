@@ -365,7 +365,7 @@ def wrap_px(words, width: float, measure) -> list:
 TAIL = 16                    # px the bubble's tail reaches out
 
 
-def render_bubble(item, n: int, theme: str, side: str, mouth, prompted: bool, measure_only: bool = False):
+def render_bubble(item, n: int, theme: str, side: str, mouth, prompted: bool, measure_only: bool = False) -> dict:
     """The bubble as two PNGs (cairo): `bg` (shape, title, buttons, ×) and `text` (the words alone,
     on nothing), the same size, so the words can be shown a bit at a time by cropping `text`. The
     tail is drawn toward `mouth` (the cat's mouth in the bubble's px) on the cat's `side`. Returns
@@ -418,7 +418,8 @@ def render_bubble(item, n: int, theme: str, side: str, mouth, prompted: bool, me
                 cr.line_to(max(1.5, x0 - TAIL + 2), min(max(ty + 2, my), ty + 10))
                 cr.line_to(x0, ty - 9)
             cr.close_path()
-            cr.set_source_rgba(*rgb(t["fill"]), 0.97)
+            fr, fg, fb = rgb(t["fill"])
+            cr.set_source_rgba(fr, fg, fb, 0.97)
             cr.fill_preserve()
             cr.set_source_rgb(*rgb(t["border"]))
             cr.set_line_width(1.6)
@@ -738,7 +739,7 @@ class FloatCat:
                 n += 1
         self.flush()
 
-    def at(self, px: int, py: int) -> str:
+    def at(self, px: int, py: int) -> tuple:
         col, row, xo, yo = cell_pos(px, py, self.cw, self.chh)
         return f"\x1b[{row + 1};{col + 1}H", xo, yo
 
@@ -777,7 +778,9 @@ class FloatCat:
             self.flush()
 
     def place_all(self) -> None:
-        self.w("\x1b[2J")                         # (cells only: pictures stay)
+        # the cells only, from the top-left down (ED 0): ESC[2J would also take every picture off
+        # and free the frames sent once in setup (kitty's grman_clear), so the cat would vanish
+        self.w("\x1b[H\x1b[J")
         self.place_cat()
         self.place_bubble()
         self.flush()
@@ -812,7 +815,8 @@ class FloatCat:
         if old and old.get("art"):
             self.drop_bubble_pictures(old)
         self.remember(item)
-        self.log("say", item.get("kind"), repr(item.get("text", "")[:60]), "prompted" if prompted else "by itself")
+        # (its key, not its words: a tab's name can be a whole command line with kitty-commands full)
+        self.log("say", item.get("kind"), item.get("key", ""), "prompted" if prompted else "by itself")
         self.set_panel(lay)
         if sound:
             self.play(sound)
@@ -886,7 +890,7 @@ class FloatCat:
             b["shown_lines"] = max(b.get("shown_lines", 0), i + 1)
         self.w(s)
 
-    def talking_mouth(self) -> str:
+    def talking_mouth(self) -> "str | None":
         """While the words come: open on a word, closed between words (lip sync with the reveal)."""
         b = self.bubble
         if not b or b["done"]:
@@ -1028,7 +1032,7 @@ class FloatCat:
                 self.w(f"\x1b]22;{shape}\x1b\\")
                 self.flush()
             return
-        if kind == "press" and button == 0:
+        if kind == "press" and button == 0 and self.lay:
             self.press = {"at": (x, y), "what": hit(self.regions, x, y), "margin": self.lay["margin"],
                           "cat": tuple(self.cat_xy)}
             return

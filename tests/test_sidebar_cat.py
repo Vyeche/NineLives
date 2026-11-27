@@ -45,6 +45,12 @@ class FakeScreen:
     def erase_in_line(self, *a):
         pass
 
+    def apply_sgr(self, params):                  # (the cell bubble's colours and words)
+        pass
+
+    def draw(self, text):
+        pass
+
 
 def ext(tab_id, start, end):
     return R(tab_id=tab_id, y=R(start=start, end=end))
@@ -330,6 +336,166 @@ class SaysItOnce(CatCase):
         tb._cat_clicked(tm)                                         # again: today's lines were said
         again = [s["kind"] for s in st["bubble"]["items"]]
         self.assertTrue(all(k in ("hello", "waiting", "done", "error", "badge") for k in again), again)
+
+
+class NewsAboutTheRightTab(CatCase):
+    """A wait is news per tab, not by how many wait; the news names the tab it's about."""
+    def setUp(self):
+        super().setUp()
+        self.tb._cat_talk["tip_at"] = float("inf")              # (no tip of the day in the way)
+    def test_a_new_wait_while_another_ends(self):
+        tb = self.tb
+        wa, wb = FakeWindow("blocked"), FakeWindow("working")
+        ta, tbb = FakeTab(wa), FakeTab(wb)
+        tm = self.window(FakeTab(), ta, tbb)
+        tm.tab_bar = sidebar(3)
+        st = tb._cat_state(tm.tab_bar)
+        st["mode"] = "text"
+        heard = []
+        with mock.patch.object(tb, "_cat_speak_up", lambda tm, bar, st, events, now, force=False: heard.append(events)):
+            tb._tick()                                              # the first look: nothing new
+            tb._tick()
+            wa.program_status.state, wb.program_status.state = "working", "blocked"   # A stops as B starts
+            tb._tick()
+            self.assertEqual(tb._cat["blocked"], 1)                 # (the total didn't change)
+            self.assertIn(["waiting"], heard)
+            heard.clear()
+            for _ in range(5):                                      # B still waits: not news again
+                tb._tick()
+            self.assertNotIn(["waiting"], heard)
+        self.assertEqual(tb._cat["waiting_tab"], tbb.id)
+
+    def speak(self, *tabs, active=0):
+        tm = self.window(*tabs, active=active)
+        tm.tab_bar = sidebar(len(tabs))
+        st = self.tb._cat_state(tm.tab_bar)
+        st["mode"] = "text"
+        return tm, st
+
+    def test_the_tab_that_just_finished(self):
+        tb = self.tb
+        wa, wb = FakeWindow("done"), FakeWindow("done")
+        ta, tbb = FakeTab(wa), FakeTab(wb)
+        tm, st = self.speak(FakeTab(), ta, tbb)
+        tb._prev_state.update({wa.id: "done", wb.id: "done"})       # A finished a while ago, B just now
+        tb._cat.update(done_at=500.0, done_tab=tbb.id)
+        tb._cat_talk["last"] = -1e9
+        tb._cat_speak_up(tm, tm.tab_bar, st, ["done"], 1000.0)
+        item = tb._bubble_item(st["bubble"])
+        self.assertEqual(item["action"], ("focus", tbb.id))
+        self.assertEqual(item["key"], f"done:{tbb.id}@500.0")
+
+    def test_a_plain_command_is_not_announced_as_another_tab(self):
+        tb = self.tb
+        wa = FakeWindow("done")
+        ta, plain = FakeTab(wa), FakeTab()
+        tm, st = self.speak(FakeTab(), ta, plain)
+        tb._prev_state[wa.id] = "done"                              # A (an agent) finished earlier
+        tb._cat.update(done_at=500.0, done_tab=plain.id)            # then a command in a plain tab
+        tb._cat_talk["last"] = -1e9
+        tb._cat_speak_up(tm, tm.tab_bar, st, ["done"], 1000.0)
+        self.assertIsNone(st["bubble"])                             # not "A finished" again
+
+
+class GoThere(CatCase):
+    """Go there in the bubble goes to the tab, also when it's in another kitty window."""
+    def test_another_kitty_window(self):
+        tb = self.tb
+        calls = []
+
+        class Manager(FakeTabManager):
+            def set_active_tab(self, tab):
+                calls.append(("tab", self.os_window_id, tab.id))
+        here, there = FakeTab(), FakeTab()
+        tm1, tm2 = Manager([here], 1), Manager([there], 2)
+        tm1.tab_bar, tm2.tab_bar = sidebar(1), sidebar(1)
+        self.boss.all_tab_managers = [tm1, tm2]
+        self.boss.set_active_window = lambda w, switch_os_window_if_needed=False: calls.append(
+            ("window", w.id, switch_os_window_if_needed))
+        for tm, tab, want in ((tm1, there, ("window", there.active_window.id, True)), (tm1, here, ("tab", 1, here.id))):
+            st = tb._cat_state(tm.tab_bar)
+            st["mode"] = "text"
+            st["bubble"] = {"items": [{"kind": "waiting", "key": "k", "action": ("focus", tab.id)}], "sel": 0,
+                            "image": False, "prompted": True}
+            calls.clear()
+            tb._bubble_do(tm, "do")
+            self.assertEqual(calls, [want])
+            self.assertIsNone(st["bubble"])
+
+
+class BubbleFollowsTheCat(PicturesStay):
+    """The open bubble is made again when the cat is drawn differently: new frames (a new Screen or
+    size), a narrower sidebar, or the text cat (then in cells), the words said so far still said;
+    and cat.txt is written from the cat's timer, never inside kitty's redraw."""
+    def setUp(self):
+        super().setUp()
+        self.tb._cat_talk["tip_at"] = float("inf")              # (no tip of the day in the way)
+
+    def open_picture(self):
+        tb = self.tb
+        self.fdt.draw_single_line_of_text = lambda wid, s, col, *a: (bytes(4 * 7 * len(s) * 18), 7 * len(s))
+        tm, b, st = self.ready()
+        tb._bubble_open(tm, b, st, [{"kind": "tip", "key": "tip:x", "title": "Tip", "text": "A short line to say.",
+                                     "action": None}], prompted=True)
+        self.assertTrue(st["bubble"]["image"])
+        return tm, b, st
+
+    def test_new_frames_bring_the_bubble_back(self):
+        tb = self.tb
+        tm, b, st = self.open_picture()
+        start = st["bubble"]["reveal"].start
+        st["loaded"] = None                                         # the frames sent again (a new size)
+        self.assertTrue(tb._cat_ready(tm, b, st))
+        self.assertIsNone(st["bubble"]["sent"])
+        b.screen.fed.clear()
+        tb._cat_tick_one(tm, b, st, time.monotonic())
+        self.assertIsNotNone(st["bubble"])
+        self.assertEqual(st["bubble"]["sent"], id(b.screen))
+        self.assertIn(f"a=p,i={tb.BUB_BODY},p={tb.BUB_P}".encode(), b"".join(b.screen.fed))   # shown again
+        self.assertEqual(st["bubble"]["reveal"].start, start)        # not said from the start again
+
+    def test_narrower_sidebar_refits_it(self):
+        tb = self.tb
+        tm, b, st = self.open_picture()
+        b.screen.columns = 18
+        tb._cat_settle(b, st)
+        tb._cat_tick_one(tm, b, st, time.monotonic())
+        spec = st["bubble"]["spec"]
+        self.assertLessEqual(spec["w"], 18 * 10)
+        self.assertTrue(all(x1 <= spec["w"] for _, _, x1, _, _ in spec["regions"]))
+
+    def test_text_cat_gets_it_in_cells(self):
+        tb = self.tb
+        tm, b, st = self.open_picture()
+        st["mode"] = "text"
+        tb._cat_settle(b, st)
+        dirty = tm.dirty
+        tb._cat_tick_one(tm, b, st, time.monotonic())
+        bub = st["bubble"]
+        self.assertIsNotNone(bub)                                   # still open, not invisible
+        self.assertFalse(bub["image"])
+        self.assertGreater(tm.dirty, dirty)
+        tb._cat_settle(b, st)                                       # kitty's redraw: drawn in cells
+        self.assertIn("box", st["bubble"])
+        tb._cat_speak_up(tm, b, st, ["waiting"], time.monotonic(), force=True)
+        self.assertIs(st["bubble"], bub)                            # (and it still says its line)
+
+    def test_no_files_in_the_redraw(self):
+        tb = self.tb
+        tm, b, st = self.ready()
+        with mock.patch.object(tb, "_cat_note") as note:
+            tb._cat_settle(b, st)
+            note.assert_not_called()
+        path = os.path.join(tb.QUEST_DIR, "cat.txt")
+        tb._cat_tick_one(tm, b, st, time.monotonic())
+        with open(path) as f:
+            self.assertIn("mode: floor", f.read())
+        open(self.kitty_path("cat-off"), "w").close()
+        st["mode"] = "off"                                          # (the layout's choice)
+        tb._cat_settle(b, st)
+        tb._cat_tick_one(tm, b, st, time.monotonic())
+        with open(path) as f:
+            self.assertIn("mode: off", f.read())
 
 
 if __name__ == "__main__":

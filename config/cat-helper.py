@@ -263,19 +263,22 @@ def _say(kind: str, vary: bool, seed: str, **kw) -> str:
 
 
 def suggestions(tabs, now: datetime.datetime, state: str, conf: str, hidden=frozenset(), tip_pool=None,
-                first=None, vary: bool = False) -> list:
+                first=None, vary: bool = False, recent=None) -> list:
     """Everything the cat has to say, most important first: tabs waiting for you, tabs that failed,
     tabs that finished (or, with none of those, a hello that says nothing needs you), a badge earned
     today, today's quest; then the day's own lines (a tip, a joke, a word), each the same all day. Each is a dict: kind, key,
     title, text, action (("focus", tab id), ("help",) or None) and its button's words. `first`: the
-    id of the tab that started waiting last, offered before the others that wait."""
+    id of the tab that started waiting last, offered before the others that wait; `recent`: {kind:
+    tab id} the same for "error" and "done" (the tab that failed or finished last)."""
     out = []
+    lead = dict(recent or {})
+    lead.setdefault("waiting", first)
     others = [t for t in tabs if not t.get("active")]
     here = next((t for t in tabs if t.get("active")), None)
     for state_name, kind, title in (("blocked", "waiting", "Needs you"), ("error", "error", "Error")):
         ts = [t for t in tabs if t.get("state") == state_name]
         # another tab first (this one is under the cat); of those, the one that just started waiting
-        ts.sort(key=lambda t: (t is here, kind != "waiting" or t["id"] != first))
+        ts.sort(key=lambda t: (t is here, t["id"] != lead.get(kind)))
         if not ts:
             continue
         t = ts[0]
@@ -290,7 +293,7 @@ def suggestions(tabs, now: datetime.datetime, state: str, conf: str, hidden=froz
         text += " Go there?" if t is not here else " Have a look?"
         out.append({"kind": kind, "key": f"{kind}:{t['id']}", "title": title, "text": text,
                     "action": ("focus", t["id"]), "button": "Go there", "ids": [x["id"] for x in ts]})
-    done = [t for t in others if t.get("state") == "done"]
+    done = sorted((t for t in others if t.get("state") == "done"), key=lambda t: t["id"] != lead.get("done"))
     if done:
         t = done[0]
         text = (_say("done", vary, f"done:{t['id']}:{now.date()}", n=t["n"], name=t["name"]) + " Go there?" if len(done) == 1 else

@@ -121,6 +121,21 @@ class BubblePicture(unittest.TestCase):
         self.assertEqual(tuple(spec["px"][mid:mid + 3]), self.colours["bg"])
         self.assertEqual(spec["chars"], "Tab 7 “Migrate” is waiting for you. Go there?")
 
+    def test_buttons_fit_a_narrow_card(self):
+        one = self.render(width=300)
+        spec = self.render(width=150)                             # two 86 px chips don't fit side by side
+        chips = [r for r in spec["regions"] if r[4] in ("do", "next")]
+        self.assertEqual(len(chips), 2)
+        for x0, y0, x1, y1, cmd in spec["regions"]:
+            self.assertTrue(0 <= x0 < x1 <= spec["w"] and 0 <= y0 < y1 <= spec["h"], cmd)
+        (a, b) = sorted(chips, key=lambda r: r[1])
+        self.assertGreaterEqual(b[1], a[3])                       # Next on a row of its own
+        self.assertGreater(spec["h"], self.render("x", width=150, buttons=[("Go ↵", "do", "do")])["h"])
+        self.assertEqual(len([r for r in one["regions"] if r[4] in ("do", "next")]), 2)
+        tiny = self.render(width=80, buttons=[("Go there, it is waiting ↵", "do", "do")])
+        x0, y0, x1, y1, _ = [r for r in tiny["regions"] if r[4] == "do"][0]
+        self.assertLessEqual(x1, 80 - 9)                          # shortened with … to fit inside
+
     def test_a_long_line_wraps_and_is_cut_at_the_last_line(self):
         spec = self.render("word " * 200, buttons=[], width=200)
         self.assertEqual(len(spec["lines"]), 5)
@@ -193,6 +208,24 @@ class Memory(unittest.TestCase):
         self.assertEqual(len(m.recent), 20)
         self.assertFalse(m.fresh({"kind": "joke", "key": "new", "text": "joke 24"}, now=99.0))
         self.assertTrue(m.fresh({"kind": "joke", "key": "new", "text": "joke 2"}, now=99.0))   # long ago
+
+    def test_the_file_keeps_no_words(self):
+        # with kitty-commands full a tab's name is its command line: never written to cat-said
+        m = self.n.Memory(self.path)
+        m.note({"kind": "waiting", "key": "waiting:7@1.0", "text": "Tab 7 “deploy --token=s3cret” is waiting."})
+        m.note({"kind": "tip", "key": "tip:x", "text": "a secret tip"})
+        with open(self.path, encoding="utf-8") as f:
+            raw = f.read()
+        self.assertNotIn("s3cret", raw)
+        self.assertNotIn("secret tip", raw)
+        self.assertFalse(self.n.Memory(self.path).fresh({"kind": "joke", "key": "j", "text": "a secret tip"}))
+        with open(self.path, "w", encoding="utf-8") as f:     # a file from before kept the words
+            f.write('{"said": {}, "recent": ["Tab 3 \u201cssh admin@host\u201d is waiting."]}')
+        old = self.n.Memory(self.path)
+        self.assertFalse(old.fresh({"kind": "joke", "key": "j", "text": "Tab 3 “ssh admin@host” is waiting."}))
+        old.note({"kind": "tip", "key": "tip:y", "text": "y"})
+        with open(self.path, encoding="utf-8") as f:
+            self.assertNotIn("admin", f.read())                   # gone with the next write
 
     def test_it_remembers_over_a_restart(self):
         m = self.n.Memory(self.path)

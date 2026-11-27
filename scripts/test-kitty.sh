@@ -123,6 +123,7 @@ PY
   fi
   rm -f "$CONF"/*-theme.auto.conf           # keep the chosen theme
   Xvfb "$DISP" -screen 0 "${size}x24" >/dev/null 2>&1 & echo $! > "$T/xvfb.pid"
+  echo "$size" > "$T/screen"               # shot grabs this size (an older ffmpeg's x11grab grabs 640x480)
   sleep 1
   tenv setsid kitty -o allow_remote_control=socket-only -o remember_window_size=no \
       -o initial_window_width="${size%x*}" -o initial_window_height="${size#*x}" \
@@ -150,7 +151,11 @@ PY
   ;;
 shot)
   name="${1:?shot NAME}"; vf="${2:-crop=330:ih:0:0,scale=iw*2:ih*2:flags=neighbor}"
-  ffmpeg -loglevel error -y -f x11grab -i "$DISP" -frames:v 1 -vf "$vf" "$T/shots/$name.png"
+  # the whole screen: say its size, as ffmpeg 4's x11grab (the Gauntlet's static build) grabs only
+  # the top-left 640x480 by default, and the cat on the sidebar's floor sat below that
+  screen="$(cat "$T/screen" 2>/dev/null || true)"
+  [[ "$screen" =~ ^[0-9]+x[0-9]+$ ]] || { echo "no test kitty screen size in $T/screen; start it first" >&2; exit 1; }
+  ffmpeg -loglevel error -y -f x11grab -video_size "$screen" -i "$DISP" -frames:v 1 -vf "$vf" "$T/shots/$name.png"
   echo "$T/shots/$name.png"
   ;;
 k) k "$@" ;;

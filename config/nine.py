@@ -13,6 +13,7 @@ its own, tests) can import them as they are:
 The pictures themselves are config/cat/ (scripts/make-cat.py); the lines it says come from
 cat-helper.py's suggestions().
 """
+import hashlib
 import json
 import os
 import time
@@ -215,6 +216,14 @@ class Bubble:
             self._w[s] = self.text(s, (255, 255, 255))[1] if s else 0
         return self._w[s]
 
+    def fit(self, s: str, width: int) -> str:
+        """s as it is if it's at most `width` px wide, else cut short with … to fit."""
+        if self.width_of(s) <= width:
+            return s
+        while s and self.width_of(s + "…") > width:
+            s = s[:-1]
+        return s.rstrip() + "…"
+
     def wrap(self, s: str, width: int, most: int) -> list:
         """The words in lines at most `width` px wide, at most `most` lines (the last cut with …)."""
         out, line = [], ""
@@ -253,13 +262,20 @@ class Bubble:
         chip_h = lh + round(4 * s)
         chip_pad = round(8 * s)
         gap = round(8 * s)
-        chips, x = [], pad
+        # the buttons in a row, the next one on a row of its own when it doesn't fit beside, and words
+        # too long for any row shortened (…): every chip, and so every click region, inside the card
+        chips, x, row = [], pad, 0
         for words, cmd, style in buttons:
+            words = self.fit(words, inner - 2 * chip_pad)
             w = self.width_of(words) + 2 * chip_pad
-            chips.append((x, words, cmd, style, w))
+            if x > pad and x + w > width - pad:
+                row, x = row + 1, pad
+            chips.append((x, row, words, cmd, style, w))
             x += w + gap
+        rows = chips[-1][1] + 1 if chips else 0
+        row_h = chip_h + round(5 * s)
         buttons_y = text_y + len(lines) * lh + round(6 * s)
-        h = buttons_y + (chip_h + round(9 * s) if chips else round(3 * s))
+        h = buttons_y + (rows * row_h - round(5 * s) + round(9 * s) if chips else round(3 * s))
         c = Canvas(width, h)
         bw = max(1, round(1.5 * s))
         c.rounded(0, 0, width, h, radius, colours["border"])
@@ -276,12 +292,13 @@ class Bubble:
         if count:
             px, w, hh = self.text(count, colours["muted"])
             c.paste(px, w, hh, cx - round(10 * s) - w, top)
-        for x0, words, cmd, style, w in chips:
+        for x0, row, words, cmd, style, w in chips:
             fill, ink = colours[style]
-            c.rounded(x0, buttons_y, x0 + w, buttons_y + chip_h, round(5 * s), fill)
+            y0 = buttons_y + row * row_h
+            c.rounded(x0, y0, x0 + w, y0 + chip_h, round(5 * s), fill)
             px, tw, hh = self.text(words, ink)
-            c.paste(px, tw, hh, x0 + chip_pad, buttons_y + (chip_h - hh) // 2)
-            regions.append((x0, buttons_y, x0 + w, buttons_y + chip_h, cmd))
+            c.paste(px, tw, hh, x0 + chip_pad, y0 + (chip_h - hh) // 2)
+            regions.append((x0, y0, x0 + w, y0 + chip_h, cmd))
         # the text, a picture of its own
         tw, th = max(1, inner), max(1, len(lines) * lh)
         t = Canvas(tw, th)
@@ -341,9 +358,19 @@ STATUS_COOLDOWN = 30 * 60.0         # a line about the same thing: not again for
 RECENT = 20                         # and none of the last 20 lines again
 
 
+def fingerprint(text: str) -> str:
+    """A line's words as Memory keeps them: a short hash, never the words (a tab's name can be a
+    whole command line with kitty-commands full, and the cat-said file is no place for that)."""
+    return "#" + hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _is_fingerprint(x: str) -> bool:
+    return len(x) == 17 and x[0] == "#" and all(c in "0123456789abcdef" for c in x[1:])
+
+
 class Memory:
     """The lines said lately (kept in a small file, so a restart doesn't make it repeat itself):
-    the last RECENT of them, and when each key was said. fresh() says whether a line may be said
+    the last RECENT of them (as fingerprints), and when each key was said. fresh() says whether a line may be said
     now: never one of the last RECENT texts (news about tabs aside: see below); a tip, joke, word or quest not again the same day; a
     line about a tab or a badge not again for STATUS_COOLDOWN (its key names the event, so a new
     event is a new key)."""
@@ -355,13 +382,15 @@ class Memory:
                 with open(path, encoding="utf-8") as f:
                     d = json.load(f)
                 self.said = {k: float(v) for k, v in d.get("said", {}).items()}
-                self.recent = [str(x) for x in d.get("recent", [])][-RECENT:]
+                # (a file from before kept the words themselves: hashed now, so the next write drops them)
+                self.recent = [x if _is_fingerprint(x) else fingerprint(x)
+                               for x in (str(x) for x in d.get("recent", []))][-RECENT:]
             except (OSError, ValueError, AttributeError):
                 pass
 
     def fresh(self, item: dict, now=None) -> bool:
         now = time.time() if now is None else now
-        if item.get("kind") not in STATUS and item.get("text") in self.recent:
+        if item.get("kind") not in STATUS and fingerprint(item.get("text", "")) in self.recent:
             return False                              # (news about a tab is its event's: a new one is news)
         at = self.said.get(item.get("key", ""))
         if at is None:
@@ -373,7 +402,7 @@ class Memory:
     def note(self, item: dict, now=None) -> None:
         now = time.time() if now is None else now
         self.said[item.get("key", "")] = now
-        self.recent = (self.recent + [item.get("text", "")])[-RECENT:]
+        self.recent = (self.recent + [fingerprint(item.get("text", ""))])[-RECENT:]
         if len(self.said) > 400:                         # old keys go (a day is the longest cooldown)
             self.said = {k: v for k, v in self.said.items() if now - v < 2 * 86400}
         if self.path:

@@ -10,7 +10,8 @@ starts always use --focus-policy=not-allowed and stop on their own (60 s at most
 
 Tools: outputs, screenshot, panel_show, panel_stop. Screenshots use cosmic-screenshot (COSMIC) or
 grim (other wlroots desktops); cropping and scaling use ffmpeg. Files go to $NL_DESKTOP_DIR
-(default: a folder under $XDG_RUNTIME_DIR), never into the repo.
+(default: a folder under $XDG_RUNTIME_DIR, else a fresh private one from mkdtemp), never into the
+repo; a folder that isn't this user's alone (owner, mode 0700) is refused.
 """
 import base64
 import glob
@@ -20,11 +21,15 @@ import re
 import shutil
 import signal
 import subprocess
+import stat
 import sys
+import tempfile
 import time
 
-OUT_DIR = os.environ.get("NL_DESKTOP_DIR") or os.path.join(
-    os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "ninelives-desktop")
+# where screenshots and panel logs go: $NL_DESKTOP_DIR, else a folder in $XDG_RUNTIME_DIR, else a
+# fresh private folder from mkdtemp (a fixed name in /tmp could be made beforehand by someone else)
+OUT_DIR = os.environ.get("NL_DESKTOP_DIR") or (
+    os.path.join(os.environ["XDG_RUNTIME_DIR"], "ninelives-desktop") if os.environ.get("XDG_RUNTIME_DIR") else "")
 KITTEN = shutil.which("kitten") or os.path.expanduser("~/.local/kitty.app/bin/kitten")
 PANEL_MAX = 60
 _panels: dict = {}          # pid -> Popen
@@ -92,21 +97,48 @@ def outputs() -> list:
     return [_text(json.dumps(found, indent=1))]
 
 
-def screenshot(args: dict) -> list:
+def out_dir() -> str:
+    """The output folder, private to this user: made with mode 0700, and an existing one is used only
+    if it's a real folder (not a link) owned by this user that nobody else can read or write."""
+    global OUT_DIR
+    if not OUT_DIR:
+        OUT_DIR = tempfile.mkdtemp(prefix="ninelives-desktop-")
+        return OUT_DIR
     os.makedirs(OUT_DIR, mode=0o700, exist_ok=True)
-    before = set(glob.glob(os.path.join(OUT_DIR, "*.png")))
+    st = os.lstat(OUT_DIR)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
+        raise PermissionError(f"{OUT_DIR} is not a private folder of this user (mode "
+                              f"{stat.S_IMODE(st.st_mode):o}, owner {st.st_uid}); not saving pixels there")
+    return OUT_DIR
+
+
+# kitten panel options that would let a panel take the keyboard, or outlive its timeout and
+# panel_stop (detached, or shown by an existing single-instance kitty), or end the options early
+PANEL_REFUSED = ("focus-policy", "grab-keyboard", "single-instance", "instance-group", "detach")
+
+
+def _refused_option(opt: str) -> bool:
+    return opt in ("--", "-1") or opt.startswith("-1=") or any(r in opt for r in PANEL_REFUSED)
+
+
+def screenshot(args: dict) -> list:
+    try:
+        out = out_dir()
+    except OSError as e:
+        return [_text(f"screenshot refused: {e}")]
+    before = set(glob.glob(os.path.join(out, "*.png")))
     if shutil.which("cosmic-screenshot"):
         cmd = ["cosmic-screenshot", "--interactive=false", "--modal=false", "--notify=false",
-               "--save-dir", OUT_DIR]
+               "--save-dir", out]
     elif shutil.which("grim"):
-        cmd = ["grim", os.path.join(OUT_DIR, f"shot-{int(time.time() * 1000)}.png")]
+        cmd = ["grim", os.path.join(out, f"shot-{int(time.time() * 1000)}.png")]
     else:
         return [_text("no screenshot tool (cosmic-screenshot or grim) found")]
     try:
         subprocess.run(cmd, capture_output=True, timeout=20)
     except (OSError, subprocess.SubprocessError) as e:
         return [_text(f"screenshot failed: {e}")]
-    new = sorted(set(glob.glob(os.path.join(OUT_DIR, "*.png"))) - before, key=os.path.getmtime)
+    new = sorted(set(glob.glob(os.path.join(out, "*.png"))) - before, key=os.path.getmtime)
     new = [p for p in new if not os.path.basename(p).startswith("view-")]
     if not new:
         return [_text("screenshot failed: no file was written")]
@@ -116,7 +148,7 @@ def screenshot(args: dict) -> list:
         filters.append(f"crop={int(args['width'])}:{int(args['height'])}:{int(args['x'])}:{int(args['y'])}")
     max_w = int(args.get("max_width") or 1280)
     filters.append(f"scale='min({max_w},iw)':-2")
-    view = os.path.join(OUT_DIR, "view-" + os.path.basename(src))
+    view = os.path.join(out, "view-" + os.path.basename(src))
     r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-vf", ",".join(filters), view],
                        capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
@@ -143,15 +175,19 @@ def panel_show(args: dict) -> list:
     if args.get("output"):
         cmd.append(f"--output-name={args['output']}")
     for opt in args.get("extra") or []:
-        if "focus-policy" in opt:
-            return [_text("refused: the focus policy is fixed to not-allowed")]
+        if _refused_option(str(opt)):
+            return [_text(f"refused: {opt} (the panel never takes the keyboard, keeps its own process "
+                          "and stops on its own)")]
         cmd.append(str(opt))
+    cmd.append("--")                    # the command's own words are never read as panel options
     if args.get("command"):
         cmd += [str(c) for c in args["command"]]
     else:
         cmd += ["sh", "-c", 'printf "%b" "$1"; sleep 3600', "sh", str(args.get("text") or "=^.^= hello")]
-    os.makedirs(OUT_DIR, mode=0o700, exist_ok=True)
-    log = os.path.join(OUT_DIR, f"panel-{int(time.time() * 1000)}.log")
+    try:
+        log = os.path.join(out_dir(), f"panel-{int(time.time() * 1000)}.log")
+    except OSError as e:
+        return [_text(f"panel refused: {e}")]
     with open(log, "wb") as out:
         p = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                              start_new_session=True)

@@ -5,6 +5,7 @@ import importlib.util
 import os
 import tempfile
 import unittest
+import unittest.mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location("cat_float", os.path.join(HERE, "..", "config", "cat-float.py"))
@@ -88,6 +89,29 @@ class Input(unittest.TestCase):
         self.assertEqual([e[0] for e in evs], ["press", "drag", "release", "move", "focus"])
         self.assertEqual(cf.hit([(0, 0, 10, 10, "cat")], 5, 5), "cat")
         self.assertIsNone(cf.hit([(0, 0, 10, 10, "cat")], 15, 5))
+
+
+class Pictures(unittest.TestCase):
+    def test_clearing_the_cells_keeps_the_pictures(self):
+        # ESC[2J would free every picture with no placement (kitty's grman_clear): the frames sent
+        # once at the start, so the cat (and a new bubble) would vanish after the first move
+        import io
+        import types
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(
+                os.environ, {"NINELIVES_STATE": d, "KITTY_CONFIG_DIRECTORY": d}):
+            out = io.StringIO()
+            cat = cf.FloatCat(types.SimpleNamespace(demo=0, seed=1, main_socket="", cells=True, theme="dark"), out)
+            cat.cw, cat.chh, cat.out_wh, cat.cat_xy = 9, 18, (1920, 1200), [100, 900]
+            cat.set_panel = lambda lay, force=False: None
+            cat.lay = cf.layout(cat.cat_xy, None, (9, 18), cat.out_wh)
+            cf.FRAME_IDS.setdefault("idle", 1)
+            cat.place_all()
+            cat.open_bubble([{"kind": "tip", "key": "tip:x", "title": "Tip", "text": "hi", "action": None}])
+            cat.place_all()
+        sent = out.getvalue()
+        self.assertIn("a=p,i=1", sent)                              # the cat was placed
+        for erase in ("\x1b[2J", "\x1b[3J", "\x1b[22J", "a=d,d=A", "a=d,d=a"):
+            self.assertNotIn(erase, sent)
 
 
 class Launcher(unittest.TestCase):
