@@ -205,18 +205,21 @@ class Pictures(HelperCase):
 
     def test_every_frame_is_shipped_small(self):
         mk = load(MAKE_CAT, "nl_make_cat")                 # (no cairo needed to read its lists)
-        self.assertEqual(tuple(mk.FRAMES), self.h.FRAMES)
+        self.assertEqual(tuple(n for n in mk.names() if not n.startswith("mouth-")), self.h.FRAMES)
+        self.assertEqual(tuple(mk.MOUTHS), self.h.MOUTHS)
+        self.assertEqual(mk.MOUTH_OF, self.h.MOUTH)              # which mouth each sitting pose wears
         self.assertEqual(tuple(mk.SIZES), self.h.SIZES)
         for size in self.h.SIZES:
-            for name in self.h.FRAMES:
+            for name in self.h.FRAMES + tuple(f"mouth-{m}" for m in self.h.MOUTHS):
                 path = os.path.join(CONFIG, "cat", str(size), name + ".png")
                 with open(path, "rb") as f:
                     head = f.read(32)
                 self.assertEqual(head[:8], b"\x89PNG\r\n\x1a\n", path)
                 self.assertEqual(struct.unpack(">II", head[16:24]), (size, size), path)
                 self.assertLess(os.path.getsize(path), 8000 if size <= 192 else 16000, path)
-        ids = {self.h.image_id(f, s) for f in self.h.FRAMES for s in self.h.SIZES}
-        self.assertEqual(len(ids), len(self.h.FRAMES) * len(self.h.SIZES))
+        every = self.h.FRAMES + tuple(f"mouth-{m}" for m in self.h.MOUTHS)
+        ids = {self.h.image_id(f, s) for f in every for s in self.h.SIZES}
+        self.assertEqual(len(ids), len(every) * len(self.h.SIZES))
 
     def helper(self, *rolls):
         out = io.StringIO()
@@ -233,7 +236,8 @@ class Pictures(HelperCase):
         self.assertNotIn("\x1b[2J", first)               # it would free the frames kitty keeps
         self.assertEqual(h.lay["size"], 384)             # 10 rows of 20 px: the 384 px frames, scaled down
         self.assertIn(f"a=t,f=100,i={self.h.image_id('idle', 384)},q=2", first)
-        self.assertIn(f"a=p,i={self.h.image_id('idle', 384)},p=7,r=10,C=1,q=2", first)
+        self.assertIn(f"a=p,i={self.h.image_id('idle', 384)},p=7,r=10,z=1,C=1,q=2", first)
+        self.assertIn(f"a=p,i={self.h.image_id('mouth-w', 384)},p=8,r=10,z=2,C=1,q=2", first)   # its mouth, over it
         out.truncate(0); out.seek(0)
         h.draw_cat()
         self.assertEqual(out.getvalue(), "")             # nothing changed: nothing written
@@ -322,8 +326,8 @@ class Keys(HelperCase):
             line = plain(canvas[row])
             self.assertEqual(h.hit(regions, c0, row), cmd)
             self.assertEqual(h.hit(regions, c1, row), cmd)
-            word = {"do": "Go there", "next": "Next", "quit": "Close"}[cmd]
-            self.assertEqual(line[c0 - 1:c0 - 1 + len(word) + 1].strip(), word)
+            word = {"do": "Go there", "next": "Next", "quit": "×"}[cmd]
+            self.assertIn(word, line[c0 - 1:c1])
         self.assertEqual(h.hit(regions, cat[0] + 2, cat[1] + 2), "pet")
         self.assertIsNone(h.hit(regions, 1, 1))
 
@@ -458,11 +462,16 @@ class Polish(HelperCase):
                 lines, regions, _ = h.bubble(item, 0, n, width)
                 self.assertEqual({r[3] for r in regions}, want, (item["kind"], n, width))
                 self.assertTrue(all(h.cells(plain(x)) == width for x in lines), (width, lines))
-        row = plain(h.bubble(quest, 0, 5, 30)[0][-2])
-        self.assertIn("Shortcuts ↵", row)
-        self.assertIn("Next ›", row)
-        self.assertIn("×", row)
-        self.assertIn(" Go there ↵   Next ›  Close ×", plain(h.bubble(go, 0, 5, 40)[0][-2]))
+        lines = [plain(x) for x in h.bubble(quest, 0, 5, 30)[0]]
+        self.assertIn("Shortcuts ↵", lines[-2])
+        self.assertIn("Next ›", lines[-2])
+        self.assertNotIn("×", lines[-2])                       # close is the × in the top right corner
+        self.assertTrue(lines[0].endswith(" × ╮"), lines[0])
+        self.assertIn(" Go there ↵    Next tip › ", plain(h.bubble(go, 0, 5, 40, next_kind="tip")[0][-2]))
+        # the buttons are filled chips: the action and Next in different fills
+        row = h.bubble(go, 0, 5, 40, chips={"do": "<DO>", "next": "<NX>"})[0][-2]
+        self.assertIn("<DO> Go there ↵ ", row)
+        self.assertIn("<NX> Next › ", row)
 
     def test_clicks_land_only_on_buttons_drawn(self):
         h = self.h

@@ -14,6 +14,13 @@ own "complete" chime. Each has its own shape, so you can tell them apart without
 
 ![Three working tabs finish one after another, each with a sparkle that lands on a check, while the cat at the bottom sings ♪, then ♪♪, then ♪♪♪ as the chimes climb](https://raw.githubusercontent.com/Vyeche/NineLives/main/docs/images/gifs/streak.gif)
 
+## The cat's voice
+
+When the cat says something by itself it gives one soft sound: a meow for news about a tab, a mrrp
+for a hello or a tip (built by `scripts/make-sounds.py`, quieter than the chimes). On by default; they
+follow the mute (Ctrl+Alt+M) and the volume, `kitty-cat sounds off` (or **Cat sounds** in the
+settings list) silences just them, and the desktop's sound set has no cat, so none play with it.
+
 ## When sounds don't play
 - **You're looking at it.** If the tab that finishes or fails is the one on screen in the kitty window you're using, there's no sound. "Needs you" still plays.
 - **Bursts play once.** Sounds within about a second of each other play only the most important one (rank, badge, needs you, error, done, drop).

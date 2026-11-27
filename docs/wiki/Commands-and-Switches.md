@@ -15,6 +15,8 @@ NineLives' settings as a list over the current tab, one row per setting with its
    Volume                ■■■■■■■■□□  80%
    Sound set                   NineLives
    The cat                         shown
+   The cat talks                      on
+   Cat sounds                         on
    Quests                     on · ★3/16
    Sidebar buttons                 shown
    Full commands in tab names        off
@@ -47,6 +49,8 @@ running an older `tab_bar.py` than the installed one, which means a restart is d
 | `kitty-sounds classic` / `ninelives` | desktop sounds / NineLives sounds | `sounds-classic` |
 | `kitty-buttons` / `off` / `on` | explain / hide / show the sidebar's search field and buttons and the × on the current tab | `buttons-off` |
 | `kitty-cat` / `off` / `on` | explain / hide / show the cat | `cat-off` |
+| `kitty-cat talk on` / `events` / `off` | how much the cat says by itself: all (news and tips), only news about your tabs, nothing (only when clicked) | `cat-talk` |
+| `kitty-cat sounds on` / `off` | the cat's meows (on by default; the sounds' mute and volume apply too) | `cat-sounds-off` |
 | `kitty-commands` / `full` / `short` | explain / whole command lines / program and subcommand only, in tab names (see [The sidebar](The-Sidebar#commands-in-tab-names)) | `full-commands` (there: whole lines) |
 | `kitty-quests` / `off` / `on` | list / hide / show quests | `quests-off` |
 | `kitty-tips` / `all` / `off` / `on` | one tip / every tip / prompt tips off / on | `tips-off` |

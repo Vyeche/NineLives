@@ -88,7 +88,7 @@ s 3 "⚠" "needs you"           "Permission prompt or question: amber block, pul
 s 1 "✗" "error"               "Something failed"
 k "‖  /  •"                 "Paused  /  new output in a background tab"
 k "3m  /  1h05"             "Right of the folder: how long it has been working / waiting / done"
-k "=^.^=  =O.O= !"           "The cat by + New tab: the whole window at a glance, its colour too: amber needs you, blue working, green done, ginger idle (kitty-cat)"
+k "click the cat"           "Nine, in the sidebar: what needs you (Go there), quest, tip; drag it about (kitty-cat talk/sounds)"
 k "Ctrl+Alt+M"              "Mute / unmute the sounds (kitty-sounds plays each one)" mute
 h "Learn as you go"
 k "ninelives"               "Every NineLives setting at a glance (ninelives settings: change them in a list)"
@@ -96,7 +96,7 @@ k "ninelives cat"           "Ask the cat: the helper cat in this tab (Ctrl+Alt+C
 k "kitty-quests"            "Quests + badges: use a shortcut once to earn it (off / on)"
 k "kitty-tips"              "Show a random tip (kitty-tips all / off / on)"
 k "kitty-sounds"            "Hear each sound (volume 5-100 / classic / off / on)"
-k "kitty-cat"               "What the cat's faces mean (off / on)"
+k "kitty-cat"               "The cat: off / on, talk on|events|off, sounds on|off"
 k "kitty-buttons"           "The sidebar's search field, buttons and × (off / on)"
 k "kitty-commands"          "A running command's tab shows git push, not its arguments (full / short)"
 h "Kittens (type in any tab)"

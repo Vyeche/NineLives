@@ -524,8 +524,8 @@ class HelperCat(TabBarCase):
         self.assertEqual(tb._cat_cols_for(1), (at - 1, 30))
         tm = types.SimpleNamespace(tab_bar=self.bar(), active_tab=None, os_window_id=1)
         y = 10 * 20 + 5
-        self.assertEqual(tb._region(tm, (at + 2) * 10 + 5, y), ("button", "cat"))
-        self.assertEqual(tb._region(tm, (at - 1) * 10 + 5, y), ("button", "cat"))      # a cell before it
+        self.assertEqual(tb._region(tm, (at + 2) * 10 + 5, y), ("cat",))
+        self.assertEqual(tb._region(tm, (at - 1) * 10 + 5, y), ("cat",))               # a cell before it
         self.assertIsNone(tb._region(tm, 45, y))                                       # "+ New tab": kitty's
         self.assertIsNone(tb._region(tm, (at + 2) * 10 + 5, y + 20))                   # the quest line
         # another kitty window with a narrow sidebar has the cat elsewhere (or nowhere)
