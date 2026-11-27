@@ -99,9 +99,13 @@ SOUNDS = {
     "badge": ("badge.oga", "complete.oga", 40000),
     "rank": ("rank.oga", "complete.oga", 40000),
     "drop": ("drop.oga", "", 40000),
+    # the cat's voice (kitty-cat sounds off silences just these; the desktop's set has no cat)
+    "meow": ("meow.oga", "", 40000),
+    "mrrp": ("mrrp.oga", "", 40000),
+    "purr": ("purr.oga", "", 40000),
 }
 # Sounds within COALESCE seconds of each other play once: the most important one wins.
-PRIORITY = {"drop": 0, "done": 1, "done-2": 1, "done-3": 1, "remind": 2, "error": 3, "blocked": 4, "badge": 5, "rank": 6}
+PRIORITY = {"meow": 0, "mrrp": 0, "purr": 0, "drop": 0, "done": 1, "done-2": 1, "done-3": 1, "remind": 2, "error": 3, "blocked": 4, "badge": 5, "rank": 6}
 COALESCE = 1.2
 MUTE_FILE = os.path.join(CONFIG_DIR, "sounds-off")
 CLASSIC_FILE = os.path.join(CONFIG_DIR, "sounds-classic")
@@ -119,7 +123,7 @@ _reminded: set = set()      # tab ids reminded (or looked at) since they started
 # The cat at the end of "+ New tab" sums up the whole window (kitty-cat off hides it).
 CAT_OFF = os.path.join(CONFIG_DIR, "cat-off")
 SLEEP_AFTER = 180.0         # nothing working or waiting this long: the cat dozes off
-_cat = {"blocked": 0, "fresh_block": False, "working": False, "done_at": -99.0, "error_at": -99.0,
+_cat = {"blocked": 0, "fresh_block": False, "working": False, "done_at": -99.0, "error_at": -99.0, "waits": 0,
         "quiet_since": time.monotonic(), "drawn": None,
         "moves": {}, "roll": 0, "seen": None}   # its moves: name -> start frame (see CAT_MOVES)
 _cat_rng = random.Random()  # the cat's dice (tests seed or replace it)
@@ -875,13 +879,17 @@ def _tick(timer_id=None) -> None:
                                 _play("done", tab.id)
                             elif state == "blocked":
                                 _blocked_since[tab.id] = now
+                                _cat["waiting_tab"] = tab.id
+                                _cat["waits"] += 1   # a new wait (one tab can start as another stops)
                                 _reminded.discard(tab.id)
                                 _play("blocked")
                             elif state == "error":
                                 _cat["error_at"] = now
+                                _cat["error_tab"] = tab.id
                                 _play("error", tab.id)
                             if state == "done" and prev == "working":
                                 _cat["done_at"] = now
+                                _cat["done_tab"] = tab.id
                         _prev_state[w.id] = state
                     if state == "blocked" and now - _blocked_since.get(tab.id, 0) < PULSE_SECONDS + 0.5:
                         slow = True
@@ -905,6 +913,7 @@ def _tick(timer_id=None) -> None:
                     started = _running.pop(tab.id)
                     _start_sparkle(tab.id)
                     _cat["done_at"] = now
+                    _cat["done_tab"] = tab.id
                     if now - started >= LONG_JOB:
                         _note_done(now)
                         _play("done", tab.id)
@@ -976,8 +985,9 @@ def _tick(timer_id=None) -> None:
             animate = True
         if slow and _frame % 2 == 0:
             animate = True
-        if _cat_face() != _cat["drawn"]:
-            animate = True
+        if _text_cat_shown() and _cat_face() != _cat["drawn"]:
+            animate = True                         # (the drawn cat changes its pictures, not the text)
+        _cat_tick(now)
         if animate:
             import kitty.tab_bar as tb
             cache = getattr(tb, "title_cache", None)
@@ -1306,22 +1316,62 @@ def _tab_states() -> tuple:
 
 
 def _fit_vertical(bar, orig, data, *a, **k) -> tuple:
+    """Lay out the sidebar (_lay_out), then find the cat its place (_cat_choose: the floor, small
+    at the end of "+ New tab", or the cat face) and lay it out again if that changes what the rows
+    say or which rows stay free; then the cat's pictures and its bubble go on top (_cat_settle).
+    Returns (kitty's result, how many tabs are hidden)."""
+    try:
+        st = _cat_state(bar)
+    except Exception:
+        st = {"mode": None, "pad": 0}
+    r, hidden, fit = _lay_out(bar, orig, data, st.get("mode"), st.get("pad", 0), a, k)
+    try:
+        if not fit:                                 # (rows kept for the floor didn't fit after all)
+            st["mode"], st["pad"] = "text", 0
+            r, hidden, fit = _lay_out(bar, orig, data, "text", 0, a, k)
+        mode, pad = _cat_choose(bar, st, hidden)
+        if (mode, pad) != (st.get("mode"), st.get("pad", 0)):
+            again = _label_kind(mode) != _label_kind(st.get("mode")) or pad != st.get("pad", 0)
+            st["mode"], st["pad"] = mode, pad
+            if again:
+                r, hidden, fit = _lay_out(bar, orig, data, mode, pad, a, k)
+                if not fit:
+                    st["mode"], st["pad"] = "text", 0
+                    r, hidden, fit = _lay_out(bar, orig, data, "text", 0, a, k)
+        _cat_settle(bar, st)
+    except Exception:
+        pass
+    return r, hidden
+
+
+def _lay_out(bar, orig, data, mode, pad, a, k) -> tuple:
     """Lay out the sidebar; when kitty can't fit every tab, show the ones that matter
     (_pick_tabs) and name the hidden ones on the line under them (a click there goes to the first
-    hidden tab: _hidden_line_click). Returns (kitty's result, how many tabs are hidden)."""
+    hidden tab: _hidden_line_click). `pad` rows are kept free at the bottom for the cat (made-up
+    entries kitty lays out, then taken out). Returns (kitty's result, how many tabs are hidden,
+    False if the kept rows didn't fit)."""
     import kitty.tab_bar as kt
-    data = _fit_own_rows(bar, data)
+    data = _fit_own_rows(bar, data, mode)
     # tabs keep their real numbers (Alt+N means the Nth tab): kitty numbers every entry it draws,
     # the search row on top and hidden tabs included
     nums = {t.tab_id: n for n, t in enumerate((t for t in data if t.tab_id > 0), 1)}
     kt._vye_tab_numbers = nums
     bar._vye_hidden = None
+    if pad and data:
+        padded = tuple(data) + _pad_entries(bar, data, pad)
+        r = orig(bar, padded, *a, **k)
+        if len(bar.tab_extents) < len(padded):
+            return r, 0, False
+        _unpad(bar)
+        _note_close_row(bar, data)
+        _note_layout(bar, data, {e.tab_id for e in bar.tab_extents}, [])
+        return r, 0, True
     r = orig(bar, data, *a, **k)
     shown = len(bar.tab_extents)                    # kitty kept a line for its red … under these
     if shown >= len(data) or shown < 1:
         _note_close_row(bar, data)
         _note_layout(bar, data, {e.tab_id for e in bar.tab_extents}, [])
-        return r, 0
+        return r, 0, True
     states = _tab_states()
     s = bar.screen
     while True:
@@ -1349,13 +1399,14 @@ def _fit_vertical(bar, orig, data, *a, **k) -> tuple:
             pass
     _note_close_row(bar, data)
     _note_layout(bar, data, shown_ids, hidden)
-    return r, len(hidden) if bar._vye_hidden else 0
+    return r, (len(hidden) if bar._vye_hidden else 0), True
 
 
-def _fit_own_rows(bar, data):
+def _fit_own_rows(bar, data, cat_mode=None):
     """Our own rows (the search row, "+ New tab") are drawn as they are, so make them for the
     sidebar's real width (_line_width): a small window or a big font makes kitty's sidebar narrower,
-    and kitty would cut the buttons off the end with … (and clicks would miss them)."""
+    and kitty would cut the buttons off the end with … (and clicks would miss them). cat_mode: where
+    the cat is (no cat face on "+ New tab" while the drawn one shows)."""
     try:
         width = _line_width(bar)
         wid = getattr(bar, "os_window_id", None)
@@ -1364,7 +1415,7 @@ def _fit_own_rows(bar, data):
             if t.tab_id == SEARCH_ROW_ID:
                 t = t._replace(title=_search_row(width, wid) or t.title)
             elif t.tab_id < 0 and t.title != "+":    # kitty's bare + is left alone: no label patch
-                t = t._replace(title=_new_tab_label(width, wid))
+                t = t._replace(title=_new_tab_label(width, wid, cat_mode))
             out.append(t)
         return tuple(out)
     except Exception:
@@ -1407,6 +1458,8 @@ ACTIONS = {   # the same actions as the keys in kitty.conf
     "cat": f"launch --type=overlay --allow-remote-control --title current sh -c 'exec python3 {_CAT_HELPER}'",
     "new": "new_tab_with_cwd",
     "close": "close_tab",
+    # the cat's bubble: "All shortcuts" (the F1 sheet, as in kitty.conf)
+    "help": "launch --type=overlay --title current sh -c 'exec \"${KITTY_CONFIG_DIRECTORY:-${XDG_CONFIG_HOME:-$HOME/.config}/kitty}/shortcuts.sh\"'",
 }
 ROW_WIDTH = 30               # = tab_title_max_length: the row's width when nothing narrows the sidebar
 _buttons: dict = {}          # what the search row's columns do (per kitty window), the × columns (per tab)
@@ -1672,50 +1725,80 @@ def _redraw(tm=None) -> None:
 
 
 def _region(tm, x, y):
-    """Which of our click targets (x, y) is on: ("hidden",), ("button", name), ("close",) or None."""
+    """Which of our click targets (x, y) is on: ("bubble", command) in the cat's bubble (command
+    None between its buttons), ("close",), ("cat",) on the cat (drawn, or its face), ("hidden",),
+    ("button", name) or None."""
     bar = tm.tab_bar
     g = bar.window_geometry
     if not (g.left <= x < g.right and g.top <= y < g.bottom):
         return None
     row, col = int((y - g.top) // bar.cell_height), int((x - g.left) // bar.cell_width)
+    st = getattr(bar, "_vye_cat", None)
+    if isinstance(st, dict):
+        cmd = _bubble_hit(bar, st, x - g.left, y - g.top)
+        if cmd is not None:
+            return ("bubble", None if cmd == "inside" else cmd)
+    ext = next((e for e in bar.tab_extents if e.y.start <= row <= e.y.end), None)
+    at = tm.active_tab
+    close_col = _buttons.get("close_cols", {}).get(at.id) if at is not None else None
+    if (ext is not None and at is not None and ext.tab_id == at.id and close_col is not None and _buttons_on()
+            and row == _buttons.get("close_row", {}).get(tm.os_window_id, -1) and col >= close_col - 1):
+        return ("close",)
+    if isinstance(st, dict) and _cat_hit(bar, st, x - g.left, y - g.top):
+        return ("cat",)
     info = getattr(bar, "_vye_hidden", None)
     if info and row == info[0]:
         return ("hidden",)
-    ext = next((e for e in bar.tab_extents if e.y.start <= row <= e.y.end), None)
     if ext is None:
         return None
     if ext.tab_id == SEARCH_ROW_ID:
         return ("button", next((a for c0, c1, a in _cols_for(tm.os_window_id) if c0 <= col <= c1), "search"))
     if ext.tab_id < 0 and row == ext.y.start:
-        cat = _cat_cols_for(tm.os_window_id)          # the cat at the end of "+ New tab": the helper
+        cat = _cat_cols_for(tm.os_window_id)          # the cat face at the end of "+ New tab"
         if cat and cat[0] <= col <= cat[1]:
-            return ("button", "cat")
+            return ("cat",)
         return None
-    at = tm.active_tab
-    close_col = _buttons.get("close_cols", {}).get(at.id) if at is not None else None
-    if (at is not None and ext.tab_id == at.id and close_col is not None and _buttons_on()
-            and row == _buttons.get("close_row", {}).get(tm.os_window_id, -1) and col >= close_col - 1):
-        return ("close",)
     return None
 
 
 def _sidebar_click(tm, x, y, button, action) -> bool:
-    """Clicks kitty mustn't see: the "hidden: …" line (goes to the first hidden tab), the search row's
-    words and buttons, and the × on the current tab. A press there is swallowed (kitty never starts
-    a drag or counts a click), and the action runs on the release only if it lands on the same
-    target as the press; releases of presses kitty saw go to kitty. True when the event was ours."""
+    """Clicks kitty mustn't see: the cat (a click opens its bubble; a drag carries it), the bubble's
+    buttons, the "hidden: …" line (goes to the first hidden tab), the search row's words and
+    buttons, and the × on the current tab. A press there is swallowed (kitty never starts a drag or
+    counts a click), and the action runs on the release only if it lands on the same target as the
+    press; releases of presses kitty saw go to kitty. A press anywhere else closes the cat's bubble.
+    True when the event was ours."""
     try:
         from kitty.fast_data_types import GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, GLFW_RELEASE
-        if button == -1 or action not in (GLFW_PRESS, GLFW_RELEASE):
-            return False
         wid = tm.os_window_id
+        if button == -1:
+            if wid in _cat_drag:                    # carrying the cat: it follows the pointer
+                _cat_drag_motion(tm, x, y)
+                return True
+            return False
+        if action not in (GLFW_PRESS, GLFW_RELEASE):
+            return False
+        if action == GLFW_PRESS and wid in _cat_drag:   # a release we never got: drop it first
+            _cat_drop(tm)
+        if action == GLFW_RELEASE and wid in _cat_drag:
+            _pressed.pop(wid, None)
+            _press_at.pop(wid, None)
+            if _cat_drop(tm):
+                return True                         # it was carried: no click
+            _cat_clicked(tm)
+            return True
         here = _region(tm, x, y)
         if action == GLFW_PRESS:
+            st = getattr(tm.tab_bar, "_vye_cat", None)
+            if isinstance(st, dict) and st.get("bubble") is not None and (here is None or here[0] not in ("bubble", "cat")):
+                _bubble_close(tm, st)               # a click elsewhere: the bubble goes (the click still works)
             if here is None:
                 _pressed.pop(wid, None)
                 return False
             _pressed[wid] = (button, here)
             _press_at[wid] = time.monotonic()
+            if here == ("cat",) and button == GLFW_MOUSE_BUTTON_LEFT and isinstance(st, dict) and st.get("mode") == "floor":
+                _cat_drag_start(tm, x, y)           # a click, or the start of carrying it
             if here[0] == "button" and button == GLFW_MOUSE_BUTTON_LEFT:
                 _redraw(tm)                         # the chip lights up while it's held
             return True
@@ -1732,11 +1815,18 @@ def _sidebar_click(tm, x, y, button, action) -> bool:
                     tm.set_active_tab(tab)
             elif here == ("close",):
                 _close_current(tm)
+            elif here == ("cat",):
+                _cat_clicked(tm)
+            elif here[0] == "bubble":
+                _bubble_do(tm, here[1])
             else:
                 _run(here[1])
         return True
     except Exception:
         _pressed.pop(getattr(tm, "os_window_id", 0), None)
+        if getattr(tm, "os_window_id", None) in _cat_drag:
+            _cat_drag.pop(tm.os_window_id, None)
+            _cat_drag_end()
         return False
 
 
@@ -1801,6 +1891,9 @@ def _note_layout(bar, data, shown_ids, hidden) -> None:
         # what kitty really drew there, read back from the sidebar's cells, so check.sh can compare
         # it with the columns above: the column of each glyph, and the sidebar's cell grid
         text += f"cells: {g.left} {g.top} {bar.cell_width} {bar.cell_height} {bar.screen.columns}\n"
+        # the first row of each tab shown (number:row), e.g. to click one, or to point at one
+        rows = {e.tab_id: e.y.start for e in bar.tab_extents}
+        text += "tabs: " + " ".join(f"{nums[t.tab_id]}:{rows[t.tab_id]}" for t in data if t.tab_id in rows and t.tab_id > 0) + "\n"
         if crow >= 0 and at in nums:
             # the current tab's folder line (agent mark, folder, branch), read back from the cells
             text += f"active: {nums[at]}\ndrawn folder: {_screen_text(bar, crow + 1).strip()}\n"
@@ -1988,14 +2081,14 @@ def _cat_react() -> None:
     waits (that stare holds still, however long the wait), asleep or hidden. The face itself (_cat_mood) only reads what this left, so drawing it twice gives the
     same frame, and nothing is redrawn between moves."""
     try:
-        seen = (_cat["blocked"], _cat["done_at"], _cat["error_at"], _badge_shown.get("until", 0.0))
+        seen = _cat_seen()
         before = _cat["seen"]
         _cat["seen"] = seen
         moves = _cat["moves"]
         for name in [n for n, start in moves.items() if _frame - start >= _move_len(n)]:
             del moves[name]                       # finished
         if before is not None:                    # (the first look after loading reacts to nothing)
-            if seen[0] > before[0]:
+            if seen[0] > before[0]:              # (a count of new waits: only goes up)
                 _cat_start("surprise")
             if seen[1] != before[1]:
                 _cat_start("hop")
@@ -2008,8 +2101,8 @@ def _cat_react() -> None:
             return
         _cat["roll"] = _frame + CAT_ROLL
         mood = _cat_base(time.monotonic())[0]
-        if mood not in CAT_MOVES["blink"][0] or os.path.exists(CAT_OFF):
-            return                                # (alert, startled, asleep: no dice)
+        if mood not in CAT_MOVES["blink"][0] or os.path.exists(CAT_OFF) or not _text_cat_shown():
+            return                                # (alert, startled, asleep, the drawn cat out: no dice)
         r = _cat_rng.random()
         if r < CAT_BLINK:
             _cat_start("blink")
@@ -2019,6 +2112,15 @@ def _cat_react() -> None:
                 _cat_start(_cat_rng.choice(pool))
     except Exception:
         pass
+
+
+def _text_cat_shown() -> bool:
+    """Some kitty window shows the cat face at the end of "+ New tab" (not the drawn cat)."""
+    try:
+        modes = [_cat_modes.get(tm.os_window_id, "text") for tm in get_boss().all_tab_managers]
+        return not modes or "text" in modes
+    except Exception:
+        return True
 
 
 def _night() -> bool:
@@ -2095,11 +2197,25 @@ def _visible(s: str) -> str:
 NEW_TAB_LABELS = (NEW_TAB_LABEL, "  +   New", "  +")   # shorter ones for a narrow sidebar
 
 
-def _new_tab_label(width=None, wid=None) -> str:
+def _new_tab_label(width=None, wid=None, cat_mode=None) -> str:
     """ "+ New tab" with the cat at its right end, and under it the next quest (or the badge
     just earned), both fitted to `width` cells (the sidebar's; ROW_WIDTH if not known). Where the
-    cat went is kept for clicks (a click on it opens the helper cat), per kitty window `wid`."""
+    cat went is kept for clicks (a click on it opens its bubble), per kitty window `wid`. While the
+    drawn cat shows (cat_mode "floor" or "small"), no cat face; "small": the drawn cat sits at the
+    right end of both lines, so the quest takes a shorter wording."""
     width = width or ROW_WIDTH
+    if _label_kind(cat_mode) != "text":
+        line1 = next((l for l in NEW_TAB_LABELS if _cells(l) <= width), "")
+        if wid is None:
+            _buttons["cat"] = None
+        else:
+            _buttons.setdefault("cat_by", {})[wid] = None
+        line2 = ""
+        try:
+            line2 = _quest_line(width - (6 if cat_mode == "small" else 0))
+        except Exception:
+            pass
+        return line1 + ("\n" + line2 if line2 else "")
     line1, line2 = next((l for l in NEW_TAB_LABELS if _cells(l) <= width), ""), ""
     where = None
     try:
@@ -2536,6 +2652,1571 @@ def _patch_quest_actions() -> None:
     Boss.dispatch_action = dispatch_action
 
 
+# ---- Nine, the drawn cat that lives in the sidebar ----------------------------------------------------
+# A silver tabby (config/cat/, drawn by scripts/make-cat.py) sits on the sidebar's floor under the
+# tabs: it blinks and fidgets, now and then walks a few steps, goes up to the tab that needs you and
+# points at it, hops when one finishes, sleeps at night (and after 3 quiet minutes) and can be
+# dragged about. A click on it opens its speech bubble (what needs you, today's quest, a tip, a joke,
+# a word: cat-helper.py's suggestions) with Go there ↵ / Next tip › and a × to close it. It speaks up
+# by itself too, briefly and rarely: a tab needs you, a tab finished, a badge, now and then a tip
+# (kitty-cat talk on | events | off), with a soft meow (kitty-cat sounds off), never while you
+# type, never the same thing twice in a row (nine.py's Memory). The bubble floats with the cat,
+# its tail pointing at it; the words come out at a steady pace while its mouth moves.
+#
+# How: kitty draws the sidebar from a Screen of its own (TabBar.screen) with the same code as a
+# terminal window, pictures included. Its pictures go in as kitty graphics-protocol commands, fed to
+# that Screen's parser (Screen.restore_scrollback) from inside kitty:
+#   - kitty makes the sidebar's Screen with no window id, and a picture is sent to the GPU only for a
+#     Screen that has one (graphics.c), so the cat's sidebar gets a new Screen tied to one of its
+#     kitty window's windows (_cat_adopt), and gets it again before sending pictures if that window
+#     closed. With a window id a graphics reply would be typed into that window's program: every
+#     command is quiet (q=2), and _cat_feed lets nothing but our own graphics commands through (a BEL
+#     there would make kitty ask the desktop for attention, which NineLives never does).
+#   - every sidebar redraw erases the screen, which takes pictures off and frees the ones nothing
+#     shows: each picture also has a placement that is never drawn (U=1), and the cat and its bubble
+#     are put back at the end of every redraw (_cat_settle, from _fit_vertical).
+#   - it moves a pixel at a time (a cell plus a pixel offset); a 15-a-second timer runs only while it
+#     walks, a 30-a-second one only while it talks; neither redraws the sidebar's text.
+#   - pictures can't leave the sidebar (kitty clips them at its edge): the cat and its bubble stay in it.
+# The bubble is a picture (nine.py's Bubble, its words drawn with kitty's own text renderer); the
+# words are a picture of their own, shown a little more at a time by cropping it. Where kitty can't
+# draw text that way, the bubble is drawn in the sidebar's cells instead (_bubble_draw_cells).
+# Where: on the floor (the bottom rows) while the tabs leave room for it; when they fill the sidebar,
+# small at the end of "+ New tab"; with no room even for that, or on a kitty without what it needs,
+# the cat face at the end of "+ New tab" (_cat_face) as before.
+CAT_TALK = os.path.join(CONFIG_DIR, "cat-talk")               # "events" or "off"; missing: on
+CAT_SOUNDS_OFF = os.path.join(CONFIG_DIR, "cat-sounds-off")
+SPRITE_BASE = 4200           # image ids in the sidebar's own graphics manager (nothing else draws there)
+BUB_BODY, BUB_TEXT, BUB_TAIL_DOWN, BUB_TAIL_UP = SPRITE_BASE + 100, SPRITE_BASE + 101, SPRITE_BASE + 102, SPRITE_BASE + 103
+KEEP_P, BODY_P, MOUTH_P = 1, 7, 8
+BUB_P, LINES_P, PART_P, TAIL_P = 20, 21, 22, 23
+FLOOR_ROWS, SMALL_ROWS = 4, 2
+PAD_ID = -20                 # made-up sidebar entries that keep the floor free (_lay_out)
+DRAWN = ("floor", "small")
+WALK_FPS, TALK_FPS = 15.0, 30.0
+WALK_SPEED, CLIMB_SPEED = 45.0, 180.0       # px a second
+CHARS_PER_SECOND = 50.0
+WANDER_EVERY = (40.0, 110.0)                # seconds between little walks
+VISIT_SECONDS = 20.0
+PERCH_SECONDS = 30.0         # dropped somewhere up the sidebar: it sits there this long
+SAY_HOLD = 7.0               # a line it said by itself stays this long after its last word
+ASK_HOLD = 90.0              # a bubble you opened: until × or this long
+UNPROMPTED_GAP = 180.0       # at most one line by itself every 3 minutes
+TIP_EVERY = (1500.0, 2700.0)                # and a tip every 25 to 45 minutes (kitty-cat talk on)
+TYPING_QUIET = 4.0           # not while the window you're in changed this recently
+CAT_DRAG_ID = 2 ** 31 - 11   # what kitty is told is being dragged while you carry the cat (no tab has it)
+NEXT_WORDS = {"waiting": "tab", "error": "tab", "done": "tab", "hello": "hello", "badge": "badge",
+              "quest": "quest", "tip": "tip", "joke": "joke", "word": "word"}
+_cat_modes: dict = {}        # os window id -> where its cat is (floor, small, text, off)
+_cat_drag: dict = {}         # os window id -> a press on the cat that may become a drag
+_cat_talk = {"last": -1e9, "tip_at": None, "typing": {}, "memory": None}
+_mods = {}
+
+
+def _load(name: str, file: str):
+    """A file next to this one (cat-helper.py, nine.py), loaded once, or None."""
+    if name not in _mods:
+        try:
+            import importlib.util
+            here = os.path.dirname(os.path.abspath(globals().get("__file__") or os.path.join(CONFIG_DIR, "tab_bar.py")))
+            spec = importlib.util.spec_from_file_location(name, os.path.join(here, file))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _mods[name] = mod
+        except Exception:
+            _mods[name] = None
+    return _mods[name]
+
+
+def _ch():
+    """cat-helper.py: the suggestions, the cell bubble, the frame lists."""
+    return _load("ninelives_cat_helper", "cat-helper.py")
+
+
+def _nine():
+    """nine.py: the cat's moves, walking, talking, its bubble picture and its memory."""
+    return _load("ninelives_nine", "nine.py")
+
+
+def _memory():
+    if _cat_talk["memory"] is None:
+        _cat_talk["memory"] = _nine().Memory(os.path.join(QUEST_DIR, "cat-said"))
+    return _cat_talk["memory"]
+
+
+def _cat_dir() -> str:
+    here = os.path.dirname(os.path.abspath(globals().get("__file__") or os.path.join(CONFIG_DIR, "tab_bar.py")))
+    return os.path.join(here, "cat")
+
+
+def _talk_setting() -> str:
+    """on, events (only news about your tabs) or off: kitty-cat talk, the settings list."""
+    try:
+        with open(CAT_TALK, encoding="utf-8") as f:
+            v = f.read().strip()
+        return v if v in ("events", "off") else "on"
+    except OSError:
+        return "on"
+
+
+def _moves(name: str) -> list:
+    return [list(x) for x in _nine().MOVES[name]]
+
+
+# -- the graphics commands --------------------------------------------------------------------------
+_APC_RE = re.compile(b"\x1b_G([A-Za-z0-9=,-]*)(?:;([A-Za-z0-9+/=]*))?\x1b\\\\")
+
+
+def _gfx(control: str, data: bytes = b"") -> bytes:
+    """One graphics command, quiet (q=2: kitty answers nothing); data goes base64 in chunks of 4096,
+    the first with the keys, the rest with m= only."""
+    control += ",q=2"
+    if not data:
+        return b"\x1b_G" + control.encode("ascii") + b"\x1b\\"
+    import base64
+    b64 = base64.standard_b64encode(data)
+    parts = [b64[i:i + 4096] for i in range(0, len(b64), 4096)]
+    out = []
+    for i, p in enumerate(parts):
+        head = (control + "," if i == 0 else "") + f"m={1 if i < len(parts) - 1 else 0}"
+        out.append(b"\x1b_G" + head.encode("ascii") + b";" + p + b"\x1b\\")
+    return b"".join(out)
+
+
+def _gfx_only(data: bytes) -> bool:
+    """True when data is nothing but whole graphics commands, each quiet (q=2), a chunked one's
+    later chunks carrying m= alone: nothing else may reach the sidebar's parser."""
+    pos, more = 0, False
+    while pos < len(data):
+        m = _APC_RE.match(data, pos)
+        if m is None:
+            return False
+        items = m.group(1).split(b",") if m.group(1) else []
+        if any(b"=" not in kv for kv in items):
+            return False
+        keys = dict(kv.split(b"=", 1) for kv in items)
+        if more:
+            if set(keys) != {b"m"}:
+                return False
+        elif keys.get(b"q") != b"2":
+            return False
+        more = keys.get(b"m") == b"1"
+        pos = m.end()
+    return pos > 0 and not more
+
+
+def _cat_feed(screen, data: bytes) -> None:
+    if not _gfx_only(data):
+        raise ValueError("only quiet graphics commands go to the sidebar")
+    screen.restore_scrollback(data)
+
+
+def _at(screen, x: float, y: float, cw: int, ch: int, cmd: bytes) -> None:
+    """Feed a placement command with the sidebar's cursor at pixel (x, y): its cell, and the rest
+    of the way as the command's X= Y= (put in here)."""
+    col, xo = divmod(max(0, int(round(x))), cw)
+    row, yo = divmod(max(0, int(round(y))), ch)
+    col, row = min(col, max(0, screen.columns - 1)), min(row, max(0, screen.lines - 1))
+    cx, cy = screen.cursor.x, screen.cursor.y
+    try:
+        screen.cursor.x, screen.cursor.y = col, row
+        _cat_feed(screen, cmd.replace(b"X=?,Y=?", f"X={xo},Y={yo}".encode()))
+    finally:
+        screen.cursor.x, screen.cursor.y = cx, cy
+
+
+_png_cache: dict = {}
+
+
+def _cat_png(size: int, name: str):
+    key = (size, name)
+    if key not in _png_cache:
+        try:
+            with open(os.path.join(_cat_dir(), str(size), name + ".png"), "rb") as f:
+                _png_cache[key] = f.read()
+        except OSError:
+            _png_cache[key] = None
+    return _png_cache[key]
+
+
+def _cat_iid(name: str) -> int:
+    ch = _ch()
+    if name.startswith("mouth-"):
+        return SPRITE_BASE + 80 + ch.MOUTHS.index(name[6:])
+    return SPRITE_BASE + ch.FRAMES.index(name)
+
+
+# -- sizes and places ------------------------------------------------------------------------------
+def _cat_rows(cell_h: int, want: int = FLOOR_ROWS) -> int:
+    """How many rows tall: `want`, fewer when that is taller than the biggest frames (never scaled up)."""
+    return max(1, min(want, 384 // max(1, cell_h)))
+
+
+def _cat_size(px: int) -> int:
+    """The frames to show for a cat px tall: the smallest at least that big (kitty scales it down)."""
+    return next((s for s in (96, 192, 384) if s >= px), 384)
+
+
+def _cell(bar) -> tuple:
+    s = bar.screen
+    cw = int(getattr(bar, "cell_width", 0) or 10)
+    ch = getattr(bar, "cell_height", None)
+    if not ch:
+        g = bar.window_geometry
+        ch = max(1, (g.bottom - g.top) // max(1, s.lines))
+    return cw, int(ch)
+
+
+def _cat_state(bar) -> dict:
+    """The cat of one sidebar, kept on its TabBar: per kitty window, kept over a config reload."""
+    st = getattr(bar, "_vye_cat", None)
+    if not isinstance(st, dict):
+        st = {}
+        try:
+            bar._vye_cat = st
+        except Exception:
+            pass
+    now = time.monotonic()
+    for k, v in (("mode", None), ("pad", 0), ("x", None), ("y", None), ("path", []), ("facing", 1),
+                 ("phase", 0.0), ("queue", []), ("shown", None), ("loaded", None), ("spot", "floor"),
+                 ("visit", None), ("until", 0.0), ("next_wander", now + 20.0), ("seen", None),
+                 ("bubble", None), ("geom", None), ("roll", 0), ("failed", False), ("errors", 0),
+                 ("noted", None), ("frozen", False), ("home_x", None), ("carried", False)):
+        st.setdefault(k, v)
+    return st
+
+
+_internals = {"ok": None}
+
+
+def _cat_possible() -> bool:
+    """kitty has what the drawn cat needs (a Screen to make, a parser to feed), and its pictures,
+    cat-helper.py and nine.py are there. Else the text cat."""
+    if _internals["ok"] is None:
+        ok = False
+        try:
+            from kitty.fast_data_types import Screen
+            ch, nine = _ch(), _nine()
+            ok = (ch is not None and nine is not None and hasattr(Screen, "restore_scrollback") and all(
+                hasattr(ch, n) for n in ("FRAMES", "MOUTHS", "MOUTH", "bubble", "suggestions", "Helper"))
+                and _cat_png(96, "idle") is not None)
+        except Exception:
+            ok = False
+        _internals["ok"] = ok
+    return _internals["ok"]
+
+
+def _cat_choose(bar, st, hidden: int) -> tuple:
+    """(where the cat goes, how many rows to keep free for it) from the sidebar just laid out:
+    "floor" when the tabs leave it FLOOR_ROWS rows at the bottom (kitty's blank lines between the
+    tabs go first if that's what it takes: then the second number says how many rows to keep),
+    "small" at the end of "+ New tab", "text" (the cat face) or "off"."""
+    if os.path.exists(CAT_OFF):
+        return "off", 0
+    if st.get("failed") or not _cat_possible():
+        return "text", 0
+    s = bar.screen
+    lines, cols = s.lines, s.columns
+    cw, ch = _cell(bar)
+    real = sorted((e for e in bar.tab_extents if e.tab_id > PAD_ID), key=lambda e: e.y.start)
+    rows = _cat_rows(ch)
+    if (not hidden and real and rows * ch * 1.5 <= cols * cw and rows >= 2
+            and getattr(bar, "tab_bar_align", "start") == "start" and real[0].y.start == 0):
+        h = sum(e.y.end - e.y.start + 1 for e in real)
+        if h + len(real) - 1 + rows <= lines:
+            return "floor", 0
+        if h + rows <= lines:
+            return "floor", rows
+    new = next((e for e in real if e.tab_id == -1), None)
+    small = _cat_rows(ch, SMALL_ROWS)
+    if new is not None and new.y.end - new.y.start + 1 >= small and small >= 2 and cols >= 18:
+        return "small", 0
+    return "text", 0
+
+
+def _pad_entries(bar, data, rows: int) -> tuple:
+    """Blank made-up entries `rows` lines tall in all, put after "+ New tab": kitty can't fit them
+    with its blank lines between tabs, so it drops those and the floor stays free."""
+    most = max(1, int(getattr(bar, "max_tab_title_lines", 1) or 1))
+    out, left, i = [], rows, 0
+    last = data[-1]
+    while left > 0:
+        h = min(most, left)
+        out.append(last._replace(title=" " + "\n " * (h - 1), tab_id=PAD_ID - 1 - i, is_active=False))
+        left -= h
+        i += 1
+    return tuple(out)
+
+
+def _unpad(bar) -> None:
+    """Take the made-up entries out again: no tab there, and the sidebar's own colour."""
+    import kitty.tab_bar as kt
+    pads = [e for e in bar.tab_extents if e.tab_id <= PAD_ID]
+    if not pads:
+        return
+    bar.tab_extents = tuple(e for e in bar.tab_extents if e.tab_id > PAD_ID)
+    s = bar.screen
+    for e in pads:
+        for row in range(e.y.start, e.y.end + 1):
+            s.cursor.x, s.cursor.y = 0, row
+            try:
+                s.cursor.reset_display_attrs()
+            except Exception:
+                pass
+            s.cursor.bg = kt.as_rgb(kt.color_as_int(bar.draw_data.default_bg))
+            s.erase_in_line(2, False)
+
+
+def _label_kind(mode) -> str:
+    return {"floor": "none", "off": "none", "small": "small"}.get(mode, "text")
+
+
+# -- after each sidebar redraw ------------------------------------------------------------------------
+def _cat_settle(bar, st) -> None:
+    """The sidebar was just drawn: where the cat is now (the floor may have moved), its pictures put
+    back (the redraw took them off), its bubble too. (Runs inside kitty's redraw: nothing slow, no
+    files; a bubble that no longer fits how the cat is drawn is made again by _bubble_refit.)"""
+    mode = st["mode"]
+    wid = getattr(bar, "os_window_id", 0)
+    _cat_modes[wid] = mode
+    st["shown"] = None                               # (the redraw erased them)
+    b = st.get("bubble")
+    if b is not None:
+        b["placed"] = None
+    s = bar.screen
+    cw, ch = _cell(bar)
+    lines, cols = s.lines, s.columns
+    width = cols * cw
+    if mode == "floor":
+        rows = _cat_rows(ch)
+        size = rows * ch
+        floor_y = (lines - rows) * ch
+        st["geom"] = {"rows": rows, "px": size, "size": _cat_size(size), "floor_y": floor_y, "width": width,
+                      "height": lines * ch, "cw": cw, "ch": ch, "lines": lines, "cols": cols}
+        if st["x"] is None or st["spot"] == "small":
+            st["x"], st["y"], st["spot"] = width * 0.06, floor_y, "floor"
+        if st["home_x"] is None:
+            st["home_x"] = st["x"]
+        st["x"] = min(max(0.0, st["x"]), max(0.0, width - size))
+        st["y"] = min(max(0.0, st["y"]), floor_y)
+        if st["spot"] == "floor" and not st["path"]:
+            st["y"] = floor_y
+        if st["spot"] == "visit":
+            spot = _visit_spot(bar, st, st.get("visit"))
+            if spot is None:
+                _cat_go_home(st)
+            elif not st["path"]:
+                st["x"], st["y"] = spot
+            else:
+                st["path"][-1] = spot
+    elif mode == "small":
+        rows = _cat_rows(ch, SMALL_ROWS)
+        size = rows * ch
+        new = next((e for e in bar.tab_extents if e.tab_id == -1), None)
+        ncols = -(-size // cw)
+        st["geom"] = {"rows": rows, "px": size, "size": _cat_size(size), "floor_y": 0, "width": width,
+                      "height": lines * ch, "cw": cw, "ch": ch, "lines": lines, "cols": cols}
+        st["path"], st["spot"] = [], "small"
+        st["x"] = float(max(0, cols - 1 - ncols) * cw)
+        st["y"] = float((new.y.start if new is not None else 0) * ch)
+    else:
+        st["geom"] = None
+        if mode == "off":
+            st["bubble"] = None
+    b = st.get("bubble")
+    if b is not None and not b.get("image"):
+        try:
+            _bubble_draw_cells(bar, st)
+        except Exception:
+            st["bubble"] = None
+    if mode in DRAWN:
+        _cat_place(bar, st, force=True)
+    # (cat.txt is written from the cat's timer, _cat_tick_one: no file I/O in kitty's redraw)
+
+
+def _visit_spot(bar, st, tab_id):
+    """Where the cat sits to point at a tab: at the sidebar's right edge, all of it inside, its paw
+    at the tab's first line. None if that tab isn't shown."""
+    g = st.get("geom")
+    e = next((e for e in bar.tab_extents if e.tab_id == tab_id), None) if tab_id else None
+    if g is None or e is None:
+        return None
+    x = max(0.0, g["width"] - g["px"])
+    y = min(max(0.0, e.y.start * g["ch"] + g["ch"] * 0.5 - g["px"] * 0.58), g["floor_y"])
+    return (x, y)
+
+
+def _cat_go_home(st) -> None:
+    g = st.get("geom")
+    st["visit"] = None
+    st["spot"] = "floor"
+    if g is None:
+        return
+    hx = st.get("home_x")
+    if hx is None:
+        hx = g["width"] * 0.06
+    _cat_walk(st, (hx, g["floor_y"]))
+
+
+def _cat_walk(st, target) -> None:
+    g = st["geom"]
+    st["path"] = _nine().route((st["x"], st["y"]), target, g["floor_y"])
+    _timer_on("walk")
+
+
+# -- what it shows ---------------------------------------------------------------------------------
+def _cat_frame(st, now: float) -> str:
+    b = st.get("bubble")
+    pointing = b is not None and _bubble_item(b).get("action") == ("focus", st.get("visit"))
+    asleep = b is None and _cat_base(now)[0] == "asleep"
+    return _nine().pick_frame(st["path"][0] if st["path"] else None, (st["x"], st["y"]), st["phase"],
+                              st["facing"], st["queue"], st["spot"], pointing, asleep, st.get("carried"))
+
+
+def _cat_lips(st, frame: str, now: float) -> str:
+    """The mouth over a sitting pose: the pose's own, or while it talks, the letter it says."""
+    ch = _ch()
+    if frame not in ch.MOUTH:
+        return ""
+    b = st.get("bubble")
+    r = b.get("reveal") if b is not None else None
+    if r is not None and not r.done(now):
+        return "mouth-" + r.mouth(now)
+    return "mouth-" + ch.MOUTH[frame]
+
+
+def _cat_place(bar, st, force: bool = False) -> bool:
+    """Put the cat's frame (and its mouth) where it is, and its bubble with it; the old ones off, in
+    the same write. False when nothing was sent (not ready, or nothing changed)."""
+    g = st.get("geom")
+    s = bar.screen
+    if g is None or st["loaded"] != (id(s), g["size"]):
+        return False
+    now = time.monotonic()
+    frame = _cat_frame(st, now)
+    if _cat_png(g["size"], frame) is None:
+        frame = "idle"
+    lips = _cat_lips(st, frame, now)
+    cw, ch = g["cw"], g["ch"]
+    want = (id(s), frame, lips, int(round(st["x"])), int(round(st["y"])), g["rows"])
+    sent = False
+    if want != st["shown"] or force:
+        old = st["shown"]
+        cmds = [_gfx(f"a=p,i={_cat_iid(frame)},p={BODY_P},r={g['rows']},X=?,Y=?,z=1,C=1")]
+        if lips:
+            cmds.append(_gfx(f"a=p,i={_cat_iid(lips)},p={MOUTH_P},r={g['rows']},X=?,Y=?,z=2,C=1"))
+        if old is not None and old[0] == id(s):
+            if old[1] != frame:
+                cmds.append(_gfx(f"a=d,d=i,i={_cat_iid(old[1])},p={BODY_P}"))
+            if old[2] and old[2] != lips:
+                cmds.append(_gfx(f"a=d,d=i,i={_cat_iid(old[2])},p={MOUTH_P}"))
+        _at(s, st["x"], st["y"], cw, ch, b"".join(cmds[:2]))
+        if len(cmds) > 2:
+            _cat_feed(s, b"".join(cmds[2:]))
+        st["shown"] = want
+        sent = True
+    if _bubble_place(bar, st, force):
+        sent = True
+    return sent
+
+
+def _cat_unplace(bar, st) -> None:
+    old = st.get("shown")
+    st["shown"] = None
+    if old is None or old[0] != id(bar.screen):
+        return
+    cmds = [_gfx(f"a=d,d=i,i={_cat_iid(old[1])},p={BODY_P}")]
+    if old[2]:
+        cmds.append(_gfx(f"a=d,d=i,i={_cat_iid(old[2])},p={MOUTH_P}"))
+    _cat_feed(bar.screen, b"".join(cmds))
+    _bubble_unplace(bar, st)
+
+
+def _wake() -> None:
+    try:
+        from kitty.fast_data_types import wakeup_main_loop
+        wakeup_main_loop()
+    except Exception:
+        pass
+
+
+# -- getting the pictures in -----------------------------------------------------------------------
+def _cat_adopt(tm, bar) -> bool:
+    """Give the sidebar a Screen tied to a live window of its kitty window (see above), unless the
+    one it has is still tied to one. kitty then lays it out and redraws it."""
+    boss = get_boss()
+    wid = getattr(bar, "_vye_cat_wid", 0)
+    w = boss.window_id_map.get(wid) if wid else None
+    if (w is not None and getattr(bar, "_vye_cat_screen", None) is bar.screen
+            and getattr(w, "os_window_id", None) == getattr(bar, "os_window_id", None)):
+        return True
+    w = getattr(tm, "active_window", None) or next((x for t in tm for x in t), None)
+    if w is None:
+        return False
+    from kitty.fast_data_types import Screen
+    old = bar.screen
+    cw, ch = _cell(bar)
+    new = Screen(None, old.lines, old.columns, 0, cw, ch, w.id)
+    new.color_profile.default_fg = old.color_profile.default_fg
+    new.color_profile.default_bg = old.color_profile.default_bg
+    bar.screen = new
+    bar._vye_cat_wid, bar._vye_cat_screen = w.id, new
+    bar.layout()                                      # sizes it and hands it to kitty's renderer
+    tm.mark_tab_bar_dirty()
+    return True
+
+
+def _cat_ready(tm, bar, st) -> bool:
+    """The frames are in this sidebar's Screen at the size it needs (sent now if not)."""
+    g = st.get("geom")
+    if g is None:
+        return False
+    s = bar.screen
+    if st["loaded"] == (id(s), g["size"]) and s.grman.image_for_client_id(SPRITE_BASE) is not None:
+        return True
+    if not _cat_adopt(tm, bar):
+        return False
+    s = bar.screen
+    ch = _ch()
+    out = []
+    for name in ch.FRAMES + tuple(f"mouth-{m}" for m in ch.MOUTHS):
+        data = _cat_png(g["size"], name)
+        if data is None:
+            continue
+        iid = _cat_iid(name)
+        out.append(_gfx(f"a=t,f=100,i={iid}", data))
+        out.append(_gfx(f"a=p,U=1,i={iid},p={KEEP_P},c=1,r=1"))   # keeps it while nothing shows it
+    _cat_feed(s, b"".join(out))
+    if s.grman.image_for_client_id(SPRITE_BASE) is None:
+        st["failed"] = True                           # kitty took none of it: the text cat
+        tm.mark_tab_bar_dirty()
+        return False
+    st["loaded"], st["shown"] = (id(s), g["size"]), None
+    b = st.get("bubble")
+    if b is not None and b.get("image"):
+        b["sent"] = None                              # (its pictures again, for this Screen: _bubble_refit)
+    tm.mark_tab_bar_dirty()                           # drawn again, with the cat on it
+    return True
+
+
+# -- the clocks ------------------------------------------------------------------------------------
+def _timer_on(which: str) -> None:
+    """The walking timer (15 a second) or the talking one (30): only while a cat walks or talks."""
+    import kitty.tab_bar as kt
+    attr = f"_vye_cat_{which}_timer"
+    if getattr(kt, attr, None) is None:
+        fn, fps = (_cat_walk_tick, WALK_FPS) if which == "walk" else (_cat_talk_tick, TALK_FPS)
+        setattr(kt, attr, add_timer(fn, 1.0 / fps, True))
+        fn.last = time.monotonic()
+
+
+def _timer_off(which: str) -> None:
+    import kitty.tab_bar as kt
+    attr = f"_vye_cat_{which}_timer"
+    t = getattr(kt, attr, None)
+    setattr(kt, attr, None)
+    if t is not None:
+        try:
+            remove_timer(t)
+        except Exception:
+            pass
+
+
+def _cat_bars():
+    try:
+        for tm in get_boss().all_tab_managers:
+            bar = getattr(tm, "tab_bar", None)
+            if bar is not None and getattr(bar, "laid_out_once", False) and isinstance(getattr(bar, "_vye_cat", None), dict):
+                yield tm, bar, bar._vye_cat
+    except Exception:
+        return
+
+
+def _cat_walk_tick(timer_id=None) -> None:
+    """15 times a second, only while a cat walks: a step, the walk cycle's next frame."""
+    now = time.monotonic()
+    dt = min(0.2, now - getattr(_cat_walk_tick, "last", now))
+    _cat_walk_tick.last = now
+    moving = False
+    for tm, bar, st in list(_cat_bars()):
+        if not st["path"] or st.get("mode") != "floor":
+            continue
+        moving = True
+        try:
+            tx, ty = st["path"][0]
+            vertical = abs(ty - st["y"]) > abs(tx - st["x"])
+            if abs(tx - st["x"]) > 1:
+                st["facing"] = 1 if tx > st["x"] else -1
+            speed = CLIMB_SPEED if vertical else WALK_SPEED * (2.5 if st["spot"] == "visit" else 1.0)
+            st["x"], st["y"], arrived = _nine().step((st["x"], st["y"]), (tx, ty), dt, speed)
+            st["phase"] += dt * (6.0 if vertical else 8.0 * (1.6 if st["spot"] == "visit" else 1.0))
+            if arrived:
+                st["path"].pop(0)
+                if not st["path"]:
+                    _cat_note(bar, st)
+                    if st["spot"] == "floor":
+                        st["home_x"] = st["x"]
+            if _cat_place(bar, st):
+                _wake()
+        except Exception:
+            st["path"] = []
+    if not moving:
+        _timer_off("walk")
+
+
+def _cat_talk_tick(timer_id=None) -> None:
+    """30 times a second, only while a cat talks: a few more letters of its line, its mouth in step."""
+    now = time.monotonic()
+    log = _cat_talk_tick.__dict__.setdefault("log", [])
+    log.append(now)                                   # (cat_ctl timing: how steady this clock is)
+    del log[:-400]
+    talking = False
+    for tm, bar, st in list(_cat_bars()):
+        b = st.get("bubble")
+        if b is None or b.get("reveal") is None:
+            continue
+        try:
+            if not b["reveal"].done(now):
+                talking = True
+            elif not b.get("said_all"):
+                b["said_all"] = True
+                b["close_at"] = max(b["close_at"], now + (ASK_HOLD if b["prompted"] else SAY_HOLD))
+                _cat_note(bar, st)
+            if _cat_place(bar, st):
+                _wake()
+        except Exception:
+            b["reveal"] = None
+    if not talking:
+        _timer_off("talk")
+
+
+def _cat_tick(now: float) -> None:
+    """From the sidebar's timer (8 times a second): each kitty window's cat."""
+    _typing_sample(now)
+    for tm, bar, st in list(_cat_bars()):
+        try:
+            _cat_tick_one(tm, bar, st, now)
+            st["errors"] = 0
+        except Exception:
+            st["errors"] += 1
+            if st["errors"] > 40:                     # something keeps failing: the text cat instead
+                st["failed"] = True
+                tm.mark_tab_bar_dirty()
+
+
+def _cat_seen() -> tuple:
+    """What the cats react to: how many waits began (a count of new waits, not of the tabs waiting
+    now: one tab can start waiting in the same tick another stops), the last finish, error, badge."""
+    return (_cat["waits"], _cat["done_at"], _cat["error_at"], _badge_shown.get("until", 0.0))
+
+
+def _cat_tick_one(tm, bar, st, now: float) -> None:
+    mode = st.get("mode")
+    off = os.path.exists(CAT_OFF)
+    if off or mode == "off":
+        if st.get("shown"):
+            _cat_unplace(bar, st)
+            _wake()
+        if off != (mode == "off"):                   # kitty-cat off / on: lay the sidebar out again
+            tm.mark_tab_bar_dirty()
+        _cat_note(bar, st)
+        return
+    seen, before = _cat_seen(), st["seen"]
+    st["seen"] = seen
+    if mode in DRAWN and not _cat_ready(tm, bar, st):
+        return
+    _bubble_refit(tm, bar, st, now)
+    asleep = _cat_base(now)[0] == "asleep"
+    events = []
+    if before is not None:
+        if seen[0] > before[0]:                       # (a count of new waits: only goes up)
+            events.append("waiting")
+        if seen[1] != before[1]:
+            events.append("done")
+        if seen[2] != before[2]:
+            events.append("error")
+        if seen[3] > before[3]:
+            events.append("badge")
+    for ev in events:                                 # its moves first
+        st["queue"] = _moves({"waiting": "surprise", "done": "hop", "error": "flinch", "badge": "cheer"}[ev])
+    if events:
+        _cat_speak_up(tm, bar, st, events, now)
+    else:
+        _cat_tip_time(tm, bar, st, now)
+    _bubble_tick(tm, bar, st, now)
+    if st["queue"]:
+        st["queue"][0][1] -= 1
+        if st["queue"][0][1] <= 0:
+            st["queue"].pop(0)
+    if mode == "floor" and not st["path"] and not st.get("carried"):
+        _cat_wander(tm, bar, st, now, asleep)
+    if mode in DRAWN and _cat_place(bar, st):
+        _wake()
+    if not st["path"]:
+        _cat_note(bar, st)
+
+
+def _cat_wander(tm, bar, st, now: float, asleep: bool) -> None:
+    """The dice (once a second) and the cat's own little trips: a few steps along the floor, back
+    home from a visit or a perch."""
+    nine = _nine()
+    b = st.get("bubble")
+    if st["spot"] == "visit":
+        if (now > st["until"] and b is None) or (b is None and not _visit_wanted(st.get("visit"))):
+            _cat_go_home(st)
+        return
+    if st["spot"] == "perch" and now > st["until"] and b is None:
+        _cat_go_home(st)
+        return
+    if _frame < st["roll"] or st["queue"] or asleep or st.get("frozen"):
+        return
+    st["roll"] = _frame + CAT_ROLL
+    rng = _cat_rng
+    r = rng.random()
+    if r < nine.BLINK:
+        st["queue"] = _moves("blink")
+    elif r < nine.BLINK + nine.FIDGET:
+        name = rng.choice(nine.FIDGETS)
+        if name == "walk":
+            if b is None and st["spot"] == "floor":
+                _cat_little_walk(st, rng)
+        else:
+            st["queue"] = _moves(name)
+    elif now > st["next_wander"] and b is None and st["spot"] == "floor":
+        st["next_wander"] = now + rng.uniform(*WANDER_EVERY)
+        _cat_little_walk(st, rng)
+
+
+def _cat_little_walk(st, rng) -> None:
+    """A few steps left or right along the floor (it stays inside the sidebar)."""
+    g = st["geom"]
+    lo, hi = 0.0, max(0.0, g["width"] - g["px"])
+    step = rng.uniform(20.0, 90.0) * (1 if rng.random() < 0.5 else -1)
+    x = st["x"] + step
+    if not lo <= x <= hi:
+        x = st["x"] - step
+    x = min(max(lo, x), hi)
+    st["home_x"] = x
+    _cat_walk(st, (x, g["floor_y"]))
+
+
+def _visit_wanted(tab_id) -> bool:
+    """Still worth sitting by: the tab waits for you, failed or finished, and isn't the one you're on."""
+    if not tab_id:
+        return False
+    tab = _tab_obj(tab_id)
+    if tab is None or _is_active(tab_id):
+        return False
+    return any(_prev_state.get(w.id) in ("blocked", "error", "done") for w in tab)
+
+
+def _cat_visit(tm, bar, st, tab_id) -> bool:
+    """Walk up to a tab and sit by it (it points while it talks about it)."""
+    if st.get("mode") != "floor" or st.get("carried"):
+        return False
+    spot = _visit_spot(bar, st, tab_id)
+    if spot is None:
+        return False
+    st["visit"], st["spot"], st["until"] = tab_id, "visit", time.monotonic() + VISIT_SECONDS
+    _cat_walk(st, spot)
+    return True
+
+
+# -- talking ---------------------------------------------------------------------------------------
+def _tab_rows(focused_wid=None) -> list:
+    """The tabs as cat-helper.py's suggestions want them (as tab-finder.py makes them from
+    kitty @ ls), from kitty itself: number, id, the name the sidebar shows, state, active."""
+    out = []
+    boss = get_boss()
+    for tm in boss.all_tab_managers:
+        tabs = list(getattr(tm, "tabs_to_be_shown_in_tab_bar", None) or tm)
+        for i, tab in enumerate(tabs):
+            states = {_prev_state.get(w.id) for w in tab}
+            state = next((x for x in ("blocked", "error", "working", "done") if x in states), "")
+            if not state and tab.id in _running:
+                state = "working"
+            try:
+                w = _base_window(tab)
+                wd = (w.get_cwd_of_child() if w is not None else "") or ""
+            except Exception:
+                wd = ""
+            try:
+                title = _row_title({"title": getattr(tab, "name", "") or getattr(tab, "title", "") or "", "tab_id": tab.id})
+                name = _tab_name(title, wd, tab.id)
+            except Exception:
+                name = ""
+            name = "".join(c for c in name if c.isprintable())[:60] or f"tab {i + 1}"
+            out.append({"n": i + 1, "id": tab.id, "name": name, "state": state,
+                        "active": tm.active_tab is tab and (focused_wid is None or tm.os_window_id == focused_wid)})
+    return out
+
+
+def _bubble_item(b) -> dict:
+    return b["items"][b["sel"]] if b and b.get("items") else {}
+
+
+def _suggest(focused_wid) -> list:
+    ch = _ch()
+    import datetime
+    return ch.suggestions(_tab_rows(focused_wid), datetime.datetime.now(), QUEST_DIR, CONFIG_DIR,
+                          ch.load_hidden(QUEST_DIR), first=_cat.get("waiting_tab"), vary=True,
+                          recent={"done": _cat.get("done_tab"), "error": _cat.get("error_tab")})
+
+
+def _bubble_open(tm, bar, st, items, sel: int = 0, prompted: bool = True, sound: str = "") -> None:
+    now = time.monotonic()
+    _bubble_unplace(bar, st)
+    st["bubble"] = {"items": items, "sel": sel, "prompted": prompted, "opened": now, "shown": set(),
+                    "close_at": now + (ASK_HOLD if prompted else 60.0), "sig": _tab_sig()}
+    _bubble_show(tm, bar, st, now)
+    if sound:
+        _cat_voice(sound)
+
+
+def _bubble_show(tm, bar, st, now: float) -> None:
+    """Show the bubble's current line: drawn (a picture, or cells), said from the start, noted in
+    the cat's memory; the cat goes to point at the tab it's about (or back down)."""
+    b = st["bubble"]
+    item = _bubble_item(b)
+    b["shown"].add(item.get("key"))
+    _memory().note(item)
+    b["said_all"] = False
+    b["close_at"] = max(b["close_at"], now + 4.0)
+    b["image"] = False
+    if st.get("mode") in DRAWN:
+        try:
+            b["image"] = _bubble_render(bar, st)
+        except Exception:
+            b["image"] = False
+    if b["image"]:
+        b["reveal"] = _nine().Reveal(b["spec"]["chars"], now, CHARS_PER_SECOND)
+        b["placed"] = None
+        _timer_on("talk")
+        _cat_place(bar, st)
+        _wake()
+    else:
+        b["reveal"] = None                            # (cells: all at once; a redraw per letter would flicker)
+        b["said_all"] = True
+        b["close_at"] = max(b["close_at"], now + (ASK_HOLD if b["prompted"] else SAY_HOLD))
+        tm.mark_tab_bar_dirty()
+    _cat_pointing(tm, bar, st)
+    _cat_note(bar, st)
+
+
+def _bubble_close(tm, st) -> None:
+    b = st.get("bubble")
+    if b is None:
+        return
+    bar = tm.tab_bar
+    _bubble_unplace(bar, st)
+    st["bubble"] = None
+    if st["spot"] == "visit":
+        st["until"] = min(st["until"], time.monotonic() + 4.0)
+    if not b.get("image"):
+        tm.mark_tab_bar_dirty()                       # (cells: drawn again without it)
+    _wake()
+    _cat_note(bar, st)
+
+
+def _tab_sig() -> tuple:
+    return tuple(sorted((tid, s) for tid, s in ((t.id, next((x for x in ("blocked", "error", "done")
+                 if any(_prev_state.get(w.id) == x for w in t)), "")) for tm in get_boss().all_tab_managers
+                 for t in tm) if s))
+
+
+def _bubble_tick(tm, bar, st, now: float) -> None:
+    b = st.get("bubble")
+    if b is not None and now > b["close_at"]:
+        _bubble_close(tm, st)
+
+
+def _typing_sample(now: float) -> None:
+    """(Each tick) where the cursor is in the window you're looking at: when it last moved."""
+    try:
+        from kitty.fast_data_types import current_focused_os_window_id
+        focused = current_focused_os_window_id()
+        tm = next((m for m in get_boss().all_tab_managers if m.os_window_id == focused), None)
+        w = tm.active_window if tm is not None else None
+        if w is None:
+            return
+        c = w.screen.cursor
+        pos = (w.id, c.x, c.y)
+        last = _cat_talk["typing"]
+        if "pos" not in last:
+            last.update(pos=pos, at=-1e9)
+        elif last["pos"] != pos:
+            last.update(pos=pos, at=now)
+    except Exception:
+        pass
+
+
+def _typing_recently(now: float) -> bool:
+    """You're busy in the window you're looking at: its cursor moved in the last TYPING_QUIET
+    seconds (typing, or a program printing). The cheap sign kitty gives; the cat keeps quiet then."""
+    return now - _cat_talk["typing"].get("at", -1e9) < TYPING_QUIET
+
+
+def _focused() -> int:
+    try:
+        from kitty.fast_data_types import current_focused_os_window_id
+        return current_focused_os_window_id()
+    except Exception:
+        return 0
+
+
+def _cat_speak_up(tm, bar, st, events, now: float, force: bool = False) -> None:
+    """Something happened: say so once (briefly, rarely, never the same thing again soon), pointing
+    at the tab; else just the moves. force (check.sh, through _cat_ctl): whatever the setting, the
+    clock and the typing."""
+    talk = "on" if force else _talk_setting()
+    if talk == "off" or st.get("bubble") is not None or tm.os_window_id != _focused():
+        return
+    if not force and (now - _cat_talk["last"] < UNPROMPTED_GAP or _typing_recently(now)):
+        if "waiting" in events and st.get("mode") == "floor" and _cat_rng.random() < 0.5:
+            _cat_visit(tm, bar, st, _cat.get("waiting_tab"))   # no words: it just goes and looks
+        return
+    if _ch() is None:
+        return
+    try:
+        items = _suggest(_focused())
+    except Exception:
+        return
+    episode = {"waiting": round(_blocked_since.get(_cat.get("waiting_tab"), 0.0), 1),
+               "done": round(_cat["done_at"], 1), "error": round(_cat["error_at"], 1),
+               "badge": round(_badge_shown.get("until", 0.0), 1)}
+    news_tab = {"waiting": _cat.get("waiting_tab"), "done": _cat.get("done_tab"), "error": _cat.get("error_tab")}
+    for ev in events:
+        item = next((s for s in items if s["kind"] == ev), None)
+        if item is None:
+            continue
+        if ev in news_tab and item.get("action") != ("focus", news_tab[ev]):
+            continue                                  # (about another tab, not the one this news is about)
+        item = dict(item, key=f"{item['key']}@{episode[ev]}")   # this event: said once, then never again
+        if not _memory().fresh(item):
+            continue
+        _cat_talk["last"] = now
+        _bubble_open(tm, bar, st, [item], prompted=False, sound="meow")
+        return
+
+
+def _cat_tip_time(tm, bar, st, now: float) -> None:
+    """Now and then (kitty-cat talk on), a tip of the day, a joke or a word, said by itself, one it
+    hasn't said today."""
+    if _cat_talk["tip_at"] is None:
+        _cat_talk["tip_at"] = now + _cat_rng.uniform(*TIP_EVERY)
+        return
+    if now < _cat_talk["tip_at"]:
+        return
+    _cat_talk["tip_at"] = now + _cat_rng.uniform(*TIP_EVERY)
+    if (_talk_setting() != "on" or st.get("bubble") is not None or now - _cat_talk["last"] < UNPROMPTED_GAP
+            or _typing_recently(now) or _cat_base(now)[0] in ("asleep", "alert") or tm.os_window_id != _focused()):
+        return
+    try:
+        items = [s for s in _suggest(tm.os_window_id) if s["kind"] in ("tip", "quest", "joke", "word")]
+    except Exception:
+        return
+    items = [s for s in items if _memory().fresh(s)]
+    if items:                                         # (nothing new: it stays quiet)
+        _cat_talk["last"] = now
+        _bubble_open(tm, bar, st, [_cat_rng.choice(items)], prompted=False, sound="mrrp")
+
+
+def _cat_voice(kind: str) -> None:
+    """One soft cat sound for a line (kitty-cat sounds off, and every sound setting, apply)."""
+    if os.path.exists(CAT_SOUNDS_OFF):
+        return
+    _play(kind)
+
+
+# -- the bubble as a picture that floats with the cat ---------------------------------------------------
+def _palette(n: int):
+    try:
+        from kitty.fast_data_types import get_options
+        from kitty.utils import color_as_int
+        v = color_as_int(getattr(get_options(), f"color{n}"))
+        return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
+    except Exception:
+        return THEME_FALLBACK.get(f"color{n}", (0xcf, 0xae, 0x7c))
+
+
+def _bubble_colours() -> dict:
+    """The bubble in the theme's colours: the terminal's own background and text, a quiet border,
+    the buttons as the sidebar's chips (the action in the accent pair, Next in the selection pair),
+    each text colour at least 4.5:1 on what it's on."""
+    t = _theme()
+    bg, fg = t["background"], t["foreground"]
+
+    def ink(fill, want):
+        return want if _contrast(want, fill) >= 4.5 else max((fg, bg), key=lambda c: _contrast(c, fill))
+    muted = t["color7"] if _contrast(t["color7"], bg) >= 4.5 else _quiet(fg, bg, QUIET_TEXT)
+    return {"bg": bg, "fg": fg, "muted": muted, "close": fg, "border": _quiet(fg, bg, 3.0),
+            "do": (t["active_tab_background"], ink(t["active_tab_background"], t["active_tab_foreground"])),
+            "next": (t["selection_background"], ink(t["selection_background"], t["selection_foreground"]))}
+
+
+def _text_drawer(os_window_id: int):
+    """kitty's own text renderer (as the tab drag's picture uses), as nine.Bubble wants it."""
+    from kitty.fast_data_types import draw_single_line_of_text as draw
+
+    def text(s, rgb):
+        if not s:
+            return b"", 0, 0
+        col = 0xFF000000 | (rgb[0] << 16) | (rgb[1] << 8) | rgb[2]
+        try:
+            px, w = draw(os_window_id, s, col, 0, 2000, 2, True)
+        except TypeError:                             # (no max_width: as wide as asked)
+            px, w = draw(os_window_id, s, col, 0, 2000)
+        return px, w, (len(px) // (4 * w) if w else 0)
+    return text
+
+
+def _bubble_buttons(b, item) -> list:
+    """The bubble's buttons: the action the line offers (Go there ↵), and Next › named after what it
+    brings, while there's a line not shown yet."""
+    out = []
+    if item.get("action"):
+        out.append((f"{item.get('button', 'Go')} ↵", "do", "do"))
+    if b.get("prompted"):
+        nxt = _nine().next_line(b["items"], b["sel"], b["shown"])
+        if nxt >= 0:
+            out.append((f"Next {NEXT_WORDS.get(b['items'][nxt]['kind'], 'line')} ›", "next", "next"))
+    return out
+
+
+def _bubble_render(bar, st) -> bool:
+    """Draw the bubble's picture (nine.Bubble) for the line it shows and send it to the sidebar's
+    Screen. False where kitty can't draw text that way (then: cells)."""
+    b = st["bubble"]
+    g = st["geom"]
+    ch_mod, nine = _ch(), _nine()
+    item = _bubble_item(b)
+    s = bar.screen
+    scale = g["ch"] / 20.0
+    key = (getattr(bar, "os_window_id", 0), scale)
+    if st.get("bubble_tool", (None,))[0] != key:
+        st["bubble_tool"] = (key, nine.Bubble(_text_drawer(getattr(bar, "os_window_id", 0)), scale))
+    tool = st["bubble_tool"][1]
+    colours = _bubble_colours()
+    kind_rgb = _palette(ch_mod.KIND_COLOUR.get(item.get("kind"), 4))
+    if _contrast(kind_rgb, colours["bg"]) < 4.5:
+        kind_rgb = colours["fg"]
+    width = int(min(g["width"] - 4, 360 * scale))
+    count = f"{b['sel'] + 1}/{len(b['items'])}" if b.get("prompted") and len(b["items"]) > 1 else ""
+    text = "".join(c for c in item.get("text", "") if c.isprintable())
+    spec = tool.render(width, item.get("title", ""), kind_rgb, count, text, _bubble_buttons(b, item), colours)
+    if spec["h"] > g["height"] * 0.8:
+        spec = tool.render(width, item.get("title", ""), kind_rgb, count, text, _bubble_buttons(b, item), colours, 2)
+    tails = (tool.tail(colours, True), tool.tail(colours, False))
+    import zlib
+    out = []
+    for iid, (w, h, px) in ((BUB_BODY, (spec["w"], spec["h"], spec["px"])), (BUB_TEXT, spec["text"]),
+                            (BUB_TAIL_DOWN, tails[0]), (BUB_TAIL_UP, tails[1])):
+        out.append(_gfx(f"a=t,f=32,s={w},v={h},o=z,i={iid}", zlib.compress(px, 6)))
+        out.append(_gfx(f"a=p,U=1,i={iid},p={KEEP_P},c=1,r=1"))
+    _cat_feed(s, b"".join(out))
+    if s.grman.image_for_client_id(BUB_BODY) is None:
+        return False
+    b["spec"], b["tails"] = spec, (tails[0][:2], tails[1][:2])
+    b["sent"], b["placed"] = id(s), None
+    b["fit"] = _bubble_fit(bar, st)
+    return True
+
+
+def _bubble_fit(bar, st):
+    """What a bubble picture was made for: the sidebar's Screen, the cat's size, the sidebar's width
+    and height. None while the cat isn't drawn (its frames not in this Screen at its size)."""
+    g = st.get("geom")
+    if st.get("mode") not in DRAWN or g is None or st.get("loaded") != (id(bar.screen), g["size"]):
+        return None
+    return (id(bar.screen), g["size"], g["width"], g["height"])
+
+
+def _bubble_refit(tm, bar, st, now: float) -> None:
+    """(From the cat's timer.) The open bubble still fits how the cat is drawn now: a picture made
+    again for a new Screen, frame size or sidebar width (the words said so far stay said); in cells
+    if the cat is text now, or the picture can't be made; closed if that fails too."""
+    b = st.get("bubble")
+    if b is None or not b.get("image"):
+        return
+    fit = _bubble_fit(bar, st)
+    if fit is not None and b.get("fit") == fit and b.get("sent") == id(bar.screen):
+        return
+    _bubble_unplace(bar, st)
+    old = b.get("reveal")
+    ok = False
+    if fit is not None:
+        try:
+            ok = _bubble_render(bar, st)
+        except Exception:
+            ok = False
+    if ok:
+        if old is not None:                           # the same moment in the line, its words re-wrapped
+            b["reveal"] = _nine().Reveal(b["spec"]["chars"], old.start, CHARS_PER_SECOND)
+            if not b["reveal"].done(now):
+                _timer_on("talk")
+        b["placed"] = None
+        if _cat_place(bar, st, force=True):
+            _wake()
+    else:
+        b["image"], b["reveal"], b["said_all"] = False, None, True     # cells: all of it at once
+        b["close_at"] = max(b["close_at"], now + (ASK_HOLD if b["prompted"] else SAY_HOLD))
+        b.pop("fit", None)
+        tm.mark_tab_bar_dirty()                       # (_cat_settle draws it in cells, or closes it)
+    _cat_note(bar, st)
+
+
+def _bubble_where(st) -> tuple:
+    """(x, y, tail x, tail y, tail down) in the sidebar's pixels, for the cat where it is now."""
+    b, g = st["bubble"], st["geom"]
+    spec = b["spec"]
+    th = b["tails"][0][1]
+    return _nine().place_bubble(st["x"], st["y"], g["px"], spec["w"], spec["h"], g["width"], g["height"], th)
+
+
+def _bubble_place(bar, st, force: bool = False) -> bool:
+    """Put the bubble's pictures where the cat is now: the card, its tail at the cat, and as much of
+    the words as it has said (the words' picture cropped: whole lines, then part of the next)."""
+    b = st.get("bubble")
+    if b is None or not b.get("image") or b.get("sent") != id(bar.screen):
+        return False
+    g = st["geom"]
+    spec = b["spec"]
+    now = time.monotonic()
+    x, y, tx, ty, down = _bubble_where(st)
+    n = b["reveal"].count(now) if b.get("reveal") is not None else len(spec["chars"])
+    full, part, used = 0, 0, 0
+    for chars, w in spec["lines"]:                    # whole lines said, then how far into the next
+        if n >= used + chars:
+            full += 1
+            used += chars + 1
+            continue
+        part = int(w * max(0, n - used) / max(1, chars))
+        break
+    want = (int(x), int(y), int(tx), int(ty), down, full, part)
+    if want == b.get("placed") and not force:
+        return False
+    s, cw, ch = bar.screen, g["cw"], g["ch"]
+    lh, tw = spec["lh"], spec["text"][0]
+    old = b.get("placed")
+    _at(s, x, y, cw, ch, _gfx(f"a=p,i={BUB_BODY},p={BUB_P},X=?,Y=?,z=5,C=1"))
+    tail = BUB_TAIL_DOWN if down else BUB_TAIL_UP
+    if old is not None and old[4] != down:
+        _cat_feed(s, _gfx(f"a=d,d=i,i={BUB_TAIL_UP if down else BUB_TAIL_DOWN},p={TAIL_P}"))
+    _at(s, tx, ty, cw, ch, _gfx(f"a=p,i={tail},p={TAIL_P},X=?,Y=?,z=6,C=1"))
+    if full:
+        _at(s, x + spec["tx"], y + spec["ty"], cw, ch,
+            _gfx(f"a=p,i={BUB_TEXT},p={LINES_P},x=0,y=0,w={tw},h={full * lh},X=?,Y=?,z=6,C=1"))
+    elif old is not None and old[5]:
+        _cat_feed(s, _gfx(f"a=d,d=i,i={BUB_TEXT},p={LINES_P}"))
+    if part and full < len(spec["lines"]):
+        _at(s, x + spec["tx"], y + spec["ty"] + full * lh, cw, ch,
+            _gfx(f"a=p,i={BUB_TEXT},p={PART_P},x=0,y={full * lh},w={part},h={lh},X=?,Y=?,z=6,C=1"))
+    elif old is None or old[6]:
+        _cat_feed(s, _gfx(f"a=d,d=i,i={BUB_TEXT},p={PART_P}"))
+    b["placed"] = want
+    b["at"] = (x, y)
+    return True
+
+
+def _bubble_unplace(bar, st) -> None:
+    b = st.get("bubble")
+    if b is None or not b.get("image") or b.get("sent") != id(bar.screen):
+        return
+    _cat_feed(bar.screen, b"".join(_gfx(f"a=d,d=i,i={i},p={p}") for i, p in (
+        (BUB_BODY, BUB_P), (BUB_TEXT, LINES_P), (BUB_TEXT, PART_P), (BUB_TAIL_DOWN, TAIL_P), (BUB_TAIL_UP, TAIL_P))))
+    b["placed"] = None
+
+
+# -- the bubble in cells (where kitty can't draw it as a picture) ----------------------------------------
+def _cat_anchor(bar, st):
+    """(top row, bottom row, middle column) of the cat the bubble points at, or None."""
+    g = st.get("geom")
+    if st.get("mode") in DRAWN and g is not None:
+        x, y = st["path"][-1] if st.get("path") else (st["x"], st["y"])
+        top = int(y // g["ch"])
+        bottom = min(g["lines"] - 1, int((y + g["px"] - 1) // g["ch"]))
+        left = max(0.0, x)
+        right = min(g["width"], x + g["px"])
+        return top, bottom, int((left + right) / 2 // g["cw"])
+    cat = _cat_cols_for(getattr(bar, "os_window_id", 0))
+    new = next((e for e in bar.tab_extents if e.tab_id == -1), None)
+    if new is None:
+        return None
+    mid = (cat[0] + cat[1]) // 2 if cat else bar.screen.columns - 5
+    return new.y.start, new.y.start, mid
+
+
+def _bubble_draw_cells(bar, st) -> None:
+    """The bubble over the sidebar's cells (cat-helper.py's bubble, the same buttons), above the cat
+    (below it if there's more room there), its tail pointing at the cat."""
+    b = st["bubble"]
+    ch = _ch()
+    anchor = _cat_anchor(bar, st)
+    if anchor is None or ch is None:
+        return
+    s = bar.screen
+    lines, cols = s.lines, s.columns
+    width = min(cols, 54)
+    item = _bubble_item(b)
+    count, sel = (len(b["items"]), b["sel"]) if b.get("prompted") else (1, 0)
+    nxt = _nine().next_line(b["items"], b["sel"], b["shown"]) if b.get("prompted") else -1
+    if b.get("prompted") and nxt < 0:
+        count = 1                                     # (no Next: every line was shown)
+    c = _bubble_colours()
+    chips = {k: _sgr_bg(c[k][0]) + _sgr_fg(c[k][1]) for k in ("do", "next")}
+    kind = b["items"][nxt]["kind"] if nxt >= 0 else None
+    top_row, bottom_row, mid = anchor
+    above, below = top_row - 1, lines - 1 - bottom_row
+    cc = min(max(1, mid), width - 2)
+    if above >= 5 or above >= below:
+        out, regions, _ = ch.bubble(item, sel, count, width, "", max(4, above), chips=chips, next_kind=kind)
+        out[-1] = f"{ch.MUTED}╰{'─' * (cc - 1)}┬{'─' * (width - 2 - cc)}╯{ch.R}"
+        top = top_row - len(out)
+    else:
+        out, regions, _ = ch.bubble(item, sel, count, width, "", max(4, below), tail=("top", cc), chips=chips,
+                                    next_kind=kind)
+        top = bottom_row + 1
+    t = _theme()
+    for i, text in enumerate(out):
+        row = top + i
+        if 0 <= row < lines:
+            _draw_sgr(s, row, text, t["background"], t["foreground"])
+    b["box"] = (max(0, top), min(lines - 1, top + len(out) - 1), 0, width - 1)
+    b["regions"] = [(top + li, c0, c1, cmd) for li, c0, c1, cmd in regions if 0 <= top + li < lines]
+
+
+_SGR_SPLIT = re.compile("(\x1b\\[[0-9;:]*m)")
+
+
+def _draw_sgr(s, row: int, text: str, bg, fg) -> None:
+    """One line of the cell bubble, with its colours, on the bubble's own background (the terminal's)."""
+    def rgb(c):
+        return (c[0] << 16 | c[1] << 8 | c[2]) << 8 | 2
+    s.cursor.x, s.cursor.y = 0, row
+    try:
+        s.cursor.reset_display_attrs()
+    except Exception:
+        pass
+    s.cursor.bg, s.cursor.fg = rgb(bg), rgb(fg)
+    for part in _SGR_SPLIT.split(text):
+        if not part:
+            continue
+        if part.startswith("\x1b["):
+            params = part[2:-1]
+            s.apply_sgr(params)
+            if params in ("", "0"):
+                s.cursor.bg, s.cursor.fg = rgb(bg), rgb(fg)
+            elif params == "39":
+                s.cursor.fg = rgb(fg)
+        else:
+            s.draw("".join(ch for ch in part if ch.isprintable()))
+
+
+def _bubble_hit(bar, st, px: float, py: float):
+    """A click in the bubble (px, py in the sidebar's pixels): its button's command, "inside"
+    elsewhere on it, None outside it."""
+    b = st.get("bubble")
+    if not b:
+        return None
+    if b.get("image"):
+        if b.get("placed") is None:
+            return None
+        x, y = b["at"]
+        spec = b["spec"]
+        for x0, y0, x1, y1, cmd in spec["regions"]:
+            if x + x0 <= px < x + x1 and y + y0 <= py < y + y1:
+                return cmd
+        return "inside" if x <= px < x + spec["w"] and y <= py < y + spec["h"] else None
+    if "box" not in b:
+        return None
+    cw, ch = _cell(bar)
+    col, row = int(px // cw), int(py // ch)
+    for r, c0, c1, cmd in b["regions"]:
+        if r == row and c0 <= col <= c1:
+            return cmd
+    t, bt, l, rt = b["box"]
+    return "inside" if t <= row <= bt and l <= col <= rt else None
+
+
+def _cat_hit(bar, st, px: float, py: float) -> bool:
+    """A point (px in the sidebar) on the drawn cat (its picture's box, a little inset)."""
+    g = st.get("geom")
+    if st.get("mode") not in DRAWN or g is None or st.get("shown") is None:
+        return False
+    x0, y0, size = st["x"], st["y"], g["px"]
+    inset = size * 0.12
+    return x0 + inset <= px < min(g["width"], x0 + size - inset) and y0 + inset * 0.5 <= py < y0 + size
+
+
+def _cat_clicked(tm) -> None:
+    """A click on the cat: its bubble, what needs you first, then the day's lines it hasn't said
+    today (a second click: the next line, as Next)."""
+    bar = tm.tab_bar
+    st = _cat_state(bar)
+    if _ch() is None:
+        return
+    if st.get("bubble") is not None and st["bubble"].get("prompted"):
+        st["queue"] = _moves("wink")
+        _bubble_do(tm, "next")
+        return
+    _bubble_close(tm, st)
+    try:
+        items = _suggest(tm.os_window_id)
+    except Exception:
+        return
+    nine = _nine()
+    mem = _memory()
+    items = [s for s in items if s["kind"] in nine.STATUS or mem.fresh(s)] or [nine.ALL_SAID]
+    st["queue"] = _moves("nod")
+    _bubble_open(tm, bar, st, items, 0, prompted=True, sound="mrrp")
+
+
+def _cat_pointing(tm, bar, st) -> None:
+    """The line is about a tab: go and point at it; else come back down."""
+    item = _bubble_item(st["bubble"]) if st.get("bubble") else {}
+    act = item.get("action")
+    if act and act[0] == "focus":
+        if st.get("visit") != act[1]:
+            _cat_visit(tm, bar, st, act[1])
+    elif st.get("spot") == "visit":
+        _cat_go_home(st)
+
+
+def _bubble_do(tm, cmd) -> None:
+    """A click on a button in the bubble: Go there (or All shortcuts), Next ›, ×."""
+    bar = tm.tab_bar
+    st = _cat_state(bar)
+    b = st.get("bubble")
+    if b is None or cmd in (None, "inside"):
+        return
+    now = time.monotonic()
+    item = _bubble_item(b)
+    if cmd == "quit":
+        _bubble_close(tm, st)
+        return
+    if cmd == "next":
+        nxt = _nine().next_line(b["items"], b["sel"], b["shown"]) if b.get("prompted") else -1
+        if nxt < 0:
+            b["items"], b["sel"] = b["items"] + [_nine().ALL_SAID], len(b["items"])
+        else:
+            b["sel"] = nxt
+        if not st["queue"]:
+            st["queue"] = _moves("nod")
+        _bubble_unplace(bar, st)
+        _bubble_show(tm, bar, st, now)
+        return
+    if cmd == "do":
+        act = item.get("action")
+        if not act:
+            _bubble_do(tm, "next")
+            return
+        _bubble_close(tm, st)
+        _clicking["on"] = True
+        try:
+            if act[0] == "focus":
+                tab = _tab_obj(act[1])
+                for m in get_boss().all_tab_managers:
+                    if tab is not None and tab in list(m):
+                        w = getattr(tab, "active_window", None)
+                        if m is tm or w is None:
+                            m.set_active_tab(tab)
+                        else:                         # another kitty window: as kitty @ focus-tab does it
+                            get_boss().set_active_window(w, switch_os_window_if_needed=True)
+                        break
+            elif act[0] == "help":
+                get_boss().combine(ACTIONS["help"])
+        except Exception:
+            pass
+        finally:
+            _clicking["on"] = False
+
+
+# -- carrying it (a drag) ---------------------------------------------------------------------------------
+# kitty hands the sidebar the mouse's moves only while a tab is dragged (or text selected), so a press
+# on the cat tells kitty a drag started with an id no tab has: the moves come (kitty's own handling
+# finds no such tab and does nothing), the cat follows the pointer (its bubble with it), and the
+# release (anywhere) puts it down: on the floor, or sitting where you left it for a while. A press
+# with no move is a click.
+def _cat_drag_start(tm, x, y) -> None:
+    st = _cat_state(tm.tab_bar)
+    g = tm.tab_bar.window_geometry
+    _cat_drag[tm.os_window_id] = {"x0": x, "y0": y, "dx": x - g.left - st["x"], "dy": y - g.top - st["y"], "moved": False}
+    try:
+        from kitty.fast_data_types import set_tab_being_dragged
+        set_tab_being_dragged(CAT_DRAG_ID, False, x, y)
+    except Exception:
+        pass
+
+
+def _cat_drag_end() -> None:
+    try:
+        from kitty.fast_data_types import get_tab_being_dragged, set_tab_being_dragged
+        if get_tab_being_dragged()[0] == CAT_DRAG_ID:
+            set_tab_being_dragged()
+    except Exception:
+        pass
+
+
+def _cat_drag_motion(tm, x, y) -> None:
+    d = _cat_drag.get(tm.os_window_id)
+    bar = tm.tab_bar
+    st = _cat_state(bar)
+    g = st.get("geom")
+    if d is None or g is None or st.get("mode") != "floor":
+        return
+    if not d["moved"]:
+        try:
+            from kitty.fast_data_types import get_options
+            threshold = get_options().drag_threshold
+        except Exception:
+            threshold = 3
+        if (x - d["x0"]) ** 2 + (y - d["y0"]) ** 2 <= max(1, threshold) ** 2:
+            return
+        d["moved"] = True
+        st["carried"], st["path"], st["queue"] = True, [], []
+        st["visit"], st["spot"] = None, "perch"
+    wg = bar.window_geometry
+    st["x"] = min(max(0.0, x - wg.left - d["dx"]), max(0.0, g["width"] - g["px"]))
+    st["y"] = min(max(0.0, y - wg.top - d["dy"]), g["floor_y"])
+    if _cat_place(bar, st):
+        _wake()
+
+
+def _cat_drop(tm) -> bool:
+    """The release of a press on the cat: True if it was carried (put it down), False for a click."""
+    d = _cat_drag.pop(tm.os_window_id, None)
+    _cat_drag_end()
+    if d is None or not d["moved"]:
+        return False
+    st = _cat_state(tm.tab_bar)
+    g = st.get("geom")
+    st["carried"] = False
+    st["visit"] = None
+    if g is not None and st["y"] >= g["floor_y"] - g["ch"]:
+        st["y"], st["spot"], st["home_x"] = g["floor_y"], "floor", st["x"]
+    else:
+        st["spot"], st["until"] = "perch", time.monotonic() + PERCH_SECONDS
+    st["queue"] = _moves("land")
+    if _cat_place(tm.tab_bar, st):
+        _wake()
+    _cat_note(tm.tab_bar, st)
+    return True
+
+
+# -- cat.txt: where it is, for check.sh ---------------------------------------------------------------
+def _cat_note(bar, st) -> None:
+    """cat.txt in the state folder (the active kitty window's cat): where it is drawn, its frame, its
+    bubble and the bubble's buttons, in screen pixels, written when that changes (not while it walks)."""
+    try:
+        if st.get("path"):
+            return
+        atm = get_boss().active_tab_manager
+        if atm is None or atm.os_window_id != getattr(bar, "os_window_id", None):
+            return
+        wg = bar.window_geometry
+        g = st.get("geom")
+        frame = st["shown"][1] if st.get("shown") else "-"
+        text = f"mode: {st.get('mode')}\nspot: {st.get('spot')}\nframe: {frame}\ntalk: {_talk_setting()}\n"
+        if g is not None and st.get("mode") in DRAWN:
+            x0, y0 = wg.left + st["x"], wg.top + st["y"]
+            text += f"cat: {int(x0)} {int(y0)} {g['px']} {g['px']} {g['size']}\n"
+            text += f"click: {int(x0 + g['px'] / 2)} {int(y0 + g['px'] * 0.6)}\n"
+        b = st.get("bubble")
+        if b is not None:
+            item = _bubble_item(b)
+            said = "all" if b.get("said_all") else "talking"
+            text += (f"bubble: open {item.get('kind')} {'asked' if b.get('prompted') else 'said'} "
+                     f"{b['sel'] + 1}/{len(b['items'])} {item.get('key') if item.get('kind') in ('waiting', 'done', 'error', 'hello') else ''}\n")
+            text += f"bubble said: {said}\nbubble drawn: {'picture' if b.get('image') else 'cells'}\n"
+            if b.get("image") and b.get("placed") is not None:
+                x, y = b["at"]
+                spec = b["spec"]
+                text += f"bubble box: {int(wg.left + x)} {int(wg.top + y)} {int(wg.left + x + spec['w'])} {int(wg.top + y + spec['h'])}\n"
+                for x0, y0, x1, y1, cmd in spec["regions"]:
+                    text += f"bubble {cmd}: {int(wg.left + x + (x0 + x1) / 2)} {int(wg.top + y + (y0 + y1) / 2)}\n"
+            elif "box" in b:
+                cw, ch = _cell(bar)
+                t, bt, l, r = b["box"]
+                text += f"bubble box: {wg.left + l * cw} {wg.top + t * ch} {wg.left + (r + 1) * cw} {wg.top + (bt + 1) * ch}\n"
+                for row, c0, c1, cmd in b["regions"]:
+                    text += f"bubble {cmd}: {wg.left + ((c0 + c1) // 2) * cw + cw // 2} {wg.top + row * ch + ch // 2}\n"
+        else:
+            text += "bubble: closed\n"
+        if text == st.get("noted"):
+            return
+        st["noted"] = text
+        _write_atomic(os.path.join(QUEST_DIR, "cat.txt"), text)
+    except Exception:
+        pass
+
+
+# -- check.sh and record.sh drive it here (tests/cat_ctl.py, a kitten run in the test kitty) -----------
+def _cat_ctl(boss, args) -> str:
+    """walk X (px from the sidebar's left), visit (the tab waiting for you), home (bubble closed),
+    freeze / thaw (no dice, no wandering), day (no night nap), say (speak up about the waiting tab
+    now), pace N (to and fro, for measuring), timing (how steady the talking clock was), state."""
+    global _night
+    tm = boss.active_tab_manager
+    bar = tm.tab_bar
+    st = _cat_state(bar)
+    cmd = args[0] if args else "state"
+    if cmd == "walk" and st.get("geom") and st.get("mode") == "floor":
+        x = min(max(0.0, float(args[1])), st["geom"]["width"] - st["geom"]["px"])
+        st["home_x"] = x
+        _cat_walk(st, (x, st["geom"]["floor_y"]))
+    elif cmd == "visit":
+        tid = next((t.id for t in tm for w in t if _prev_state.get(w.id) == "blocked"), None)
+        return "visiting" if _cat_visit(tm, bar, st, tid) else "no visit"
+    elif cmd == "home":
+        _bubble_close(tm, st)
+        _cat_go_home(st)
+    elif cmd in ("freeze", "thaw"):
+        st["frozen"] = cmd == "freeze"
+    elif cmd == "day":
+        _night = lambda: False   # noqa: E731
+    elif cmd == "say":
+        _bubble_close(tm, st)
+        _memory().said.clear()
+        _memory().recent.clear()
+        _cat_speak_up(tm, bar, st, ["waiting"], time.monotonic(), force=True)
+    elif cmd == "pace":                                  # walk to and fro (the CPU measurement)
+        g = st["geom"]
+        st["frozen"] = True
+        st["path"] = [(g["width"] - g["px"], g["floor_y"]), (0.0, g["floor_y"])] * int(args[1] if len(args) > 1 else 4)
+        _timer_on("walk")
+    elif cmd == "timing":
+        ts = getattr(_cat_talk_tick, "log", [])
+        gaps = [b - a for a, b in zip(ts, ts[1:])]
+        if not gaps:
+            return "no talking measured"
+        gaps.sort()
+        return (f"talk ticks: {len(ts)}, interval mean {sum(gaps) / len(gaps) * 1000:.1f} ms, median "
+                f"{gaps[len(gaps) // 2] * 1000:.1f} ms, worst {gaps[-1] * 1000:.1f} ms")
+    g = st.get("geom") or {}
+    b = st.get("bubble")
+    return (f"mode={st.get('mode')} spot={st.get('spot')} x={st.get('x')} y={st.get('y')} path={len(st.get('path') or [])} "
+            f"frame={(st.get('shown') or [0, '-'])[1]} size={g.get('size')} rows={g.get('rows')} failed={st.get('failed')} "
+            f"wid={getattr(bar, '_vye_cat_wid', 0)} images={bar.screen.grman.image_count} "
+            f"bubble={'none' if b is None else ('picture' if b.get('image') else 'cells')} "
+            f"said={'-' if b is None else ('all' if b.get('said_all') else 'talking')}")
+
+
+def _cat_reload() -> None:
+    """A config reload: the timers are the old load's; the cats keep where they are."""
+    _timer_off("walk")
+    _timer_off("talk")
+    for tm, bar, st in list(_cat_bars()):
+        try:
+            _cat_unplace(bar, st)
+        except Exception:
+            pass
+        st["path"], st["queue"], st["bubble"], st["loaded"] = [], [], None, None
+        st["carried"], st["seen"] = False, None          # (this load's mood state starts afresh)
+        st.pop("bubble_tool", None)
+        if st.get("spot") in ("visit", "peek", "perch") and st.get("geom"):
+            st["x"], st["y"], st["spot"] = st.get("home_x") or 0.0, st["geom"]["floor_y"], "floor"
+
+
 RUNNING_FILE = os.path.join(QUEST_DIR, "tab_bar.running")
 
 
@@ -2568,12 +4249,14 @@ def _install_quests() -> None:
     kt._vye_hidden_line_click = _sidebar_click
     kt._vye_search_row = _search_row
     kt._vye_tab_clicked = _tab_clicked
+    kt._vye_cat_ctl = _cat_ctl
     kt._vye_hooks = {"drop": lambda: _play("drop")}
     _write_quest_files()
     _patch_quest_actions()
 
 
 _install_quests()
+_cat_reload()
 _patch_drag_visuals()
 _patch_tab_hit_areas()
 _patch_tab_drag_in_window()

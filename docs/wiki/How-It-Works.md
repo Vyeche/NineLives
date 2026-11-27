@@ -45,8 +45,8 @@ These are installed once per kitty process. Each checks that what it relies on e
 if not.
 | Patch | Why |
 | --- | --- |
-| `TabManager.handle_tab_bar_mouse` | drag tabs inside the sidebar on Wayland (COSMIC ignores kitty's compositor drag) |
-| `TabBar.update_vertical` | the gap row under a tab belongs to that tab, for clicks and drags |
+| `TabManager.handle_tab_bar_mouse` | drag tabs inside the sidebar on Wayland (COSMIC ignores kitty's compositor drag); clicks on our buttons, the cat and its bubble; carrying the cat (a press on it tells kitty a drag started, so the mouse's moves come) |
+| `TabBar.update_vertical` | the gap row under a tab belongs to that tab, for clicks and drags; after each sidebar layout, the drawn cat's place (the floor, small by "+ New tab", or its face) and its pictures put back |
 | `TabManager.tab_bar_data` | the search field and buttons on top; "+ New tab" label, the cat (a click on it opens the helper cat), the quest line |
 | `Boss.dispatch_action` | notice shortcuts for quests |
 | drag image functions | the high-contrast drag card (X11) |
@@ -69,6 +69,7 @@ written atomically to `~/.local/state/ninelives/`.
 | `config/command_title.py` | which titles are a running command's command line (compared with the command the shell reported to kitty, `last_cmd_cmdline`) and their short form (`git push`); `tab_bar.py`, `tab-finder.py` and `scripts/kitty-tabs.py` all use it, and `full-commands` turns it off |
 | `config/tab-finder.py` | the tab search box (Ctrl+Shift+Space) and the jump to the waiting tab (Ctrl+Alt+U) |
 | `config/settings.py` | the settings list (Ctrl+Shift+F2, the sidebar's ⚙, `ninelives settings`): one row per setting, written to the same switch files the `kitty-*` commands use |
+| `config/nine.py` | the cat's parts that don't need kitty: its moves and which picture shows, walking, talking at a steady pace, its speech bubble as a picture (text drawn by a function it's handed: kitty's own renderer in the sidebar), and its memory of what it said (`cat-said` in the state folder: keys and short hashes of the lines, never their words, which can name a tab after a whole command line) |
 | `config/cat-helper.py`, `config/cat/` | the helper cat (Ctrl+Alt+C, a click on the sidebar's cat, `ninelives cat`): an overlay that shows the drawn cat with kitty's graphics protocol (each pose sent once as a PNG, then swapped in place; never `\e[2J`, which would free the poses kitty keeps) and a bubble drawn in cells. It reads the tabs as the search box does (`tab-finder.py`'s rows, `kitty @ ls` once a second while open) and quests from `quests.txt` |
 | `config/tips.sh` | prompt tips and the `kitty-*` commands |
 | `config/sounds/*.oga` | sounds, built by `scripts/make-sounds.py` |
@@ -77,10 +78,26 @@ written atomically to `~/.local/state/ninelives/`.
 | `scripts/kitty-relaunch.sh` | restart kitty and reopen every tab (finds kitty by its remote-control socket: the one it runs in, else the only one) |
 | `scripts/kitty-tabs.py` | reads `kitty @ ls` for the relaunch: how to bring each tab back, which tabs are busy; and which kitty sockets there are |
 | `scripts/make-sounds.py` | builds the sounds from scratch |
-| `scripts/make-cat.py` | draws the helper cat's poses (`config/cat/<size>/<pose>.png`) with pycairo, as small palette PNGs; `--sheet FILE` makes a contact sheet |
+| `scripts/make-cat.py` | draws the cat's poses, its walk and its mouths (`config/cat/<size>/<pose>.png`) with pycairo, as small palette PNGs; `--sheet FILE` makes a contact sheet |
 | `tests/` | unit tests, no kitty needed (see [Testing](Testing)) |
 | `scripts/check.sh` | every check in one command, see [Testing](Testing) |
 | `scripts/check-macos.sh`, `tests/live_agent_lookup.py` | the macOS checks (the Gauntlet's macOS lane), and the agent lookup against real processes with kitty's own Python |
 | `scripts/dev-kitty.sh` | a visible dev kitty with its own config folder, see [Testing](Testing) |
 | `scripts/test-kitty.sh`, `scripts/vmouse.py` | testing, see [Testing](Testing) |
 | `scripts/publish-wiki.sh` | publish `docs/wiki/` to the repository's wiki (GitHub, Gitea, …) |
+
+## The drawn cat in the sidebar
+
+kitty draws the sidebar from a Screen of its own (`TabBar.screen`) with the same code as a terminal
+window, pictures included, but makes that Screen without a window id, and a picture reaches the GPU
+only for a Screen that has one. So the sidebar gets a new Screen tied to one of its kitty window's
+windows (picked again if that window closes), and the cat's frames go in as graphics-protocol
+commands fed to its parser (`Screen.restore_scrollback`) from inside kitty. Only our own quiet
+(`q=2`) graphics commands may go through: tab_bar.py checks every byte (a reply would be typed into
+the borrowed window's program, a BEL would ask the desktop for attention). Each sidebar redraw
+erases the screen, so every picture also has a placement that is never drawn (it keeps the picture),
+and the cat and its bubble are put back at the end of each redraw. It moves a pixel at a time (a cell
+plus a pixel offset); a timer runs 15 times a second only while it walks and 30 times while it talks,
+and neither redraws the sidebar's text. Its bubble is a picture too, drawn with kitty's own text
+renderer, and the words are shown a little more at a time by cropping their picture. On a kitty
+without these internals the cat face shows instead.

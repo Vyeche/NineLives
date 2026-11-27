@@ -26,7 +26,7 @@ A kitty setup built around watching many AI coding sessions at once: live per-ta
 - Finding tabs: Ctrl+Shift+Space search box (filters All / Waiting / Working / Done), Ctrl+Alt+U jumps to the tab waiting for you (`config/tab-finder.py`).
 - Status icons with colour: working, done, needs you (a filled amber block, the strongest mark in the sidebar), error, new output.
 - Sounds: NineLives' own (`config/sounds/`, built by `scripts/make-sounds.py`), one per event with its own pitch shape; finishes in a row climb a step (done, done-2, done-3); needs you is the loudest; bursts play once; one soft reminder for a tab left waiting 3 min unseen. Mute: Ctrl+Alt+M; `kitty-sounds classic` for the desktop's sounds.
-- The cat (`=^.^=`) at the end of "+ New tab" sums up the window (needs you, working, finished, error, badge, napping); `kitty-cat off` hides it. Idle it is ginger and has small moves (blink, wink, glance, whisker twitch, tail flick), and it reacts to what happens; it redraws only while a move plays and sleeps from 23:00 to 06:00 when nothing is going on. It stops redrawing once it is asleep. Clicked (or Ctrl+Alt+C, `ninelives cat`), a drawn version of it comes out over the current tab (`config/cat-helper.py`, kitty's graphics protocol, frames pre-drawn by `scripts/make-cat.py`) with a speech bubble: what needs you first (Enter goes there), then today's quest and a tip, joke or word of the day. Only on demand, silent, and it never pops up by itself.
+- Nine, the drawn cat (2026-11-27): lives on the sidebar's floor (a picture in kitty's own sidebar screen), walks, points at the tab that needs you, can be dragged; a click opens its floating speech bubble (cat-helper.py's suggestions: tab news, quest, tip, joke, word); it speaks up by itself briefly and rarely, with a soft meow, never repeating itself (`kitty-cat talk`, `kitty-cat sounds`, `kitty-cat off`). A full sidebar: small by "+ New tab", else the old cat face (`=^.^=`), which still sums up the window. Ctrl+Alt+C shows it big over the current tab.
 - Learning: F1 cheat sheet, a random tip under each new shell prompt (`kitty-tips`).
 - Quests and badges (built 2026-11-17): 16 shortcut quests (the next one rotates daily among the first three), ★/✓ marks in F1, an Alt+N hint when you click a tab, badges with their own sound, a notification, a sparkle and a gold wave down the sidebar, ranks with a fanfare; `kitty-quests` lists them.
 - kitty has no hover tooltips on tabs; anything "tooltip"-like must be drawn in cells, shown in the prompt, or sent as a notification.
@@ -52,7 +52,7 @@ tips (`tips.sh`) in step when behaviour changes.
 1. Status first: what each tab is doing must be readable in a glance, by icon and colour, before any text.
 2. Readability is non-negotiable: text ≥ 4.5:1 and icons ≥ 3:1 in both themes.
 3. Fun that teaches: delight (animation, sound, badges) should point at something worth learning, never just noise.
-4. Never get in the way: no prompts or popups while an agent session is working; everything can be muted or turned off.
+4. Never get in the way: no prompts while an agent session is working, never steal the focus, everything can be muted or turned off. The cat may speak up briefly (a few seconds, at most one line every few minutes, never while you type), and `kitty-cat talk off` quiets it.
 5. Survive kitty updates: patches check what they rely on and switch themselves off instead of breaking.
 
 ## Accessibility & Inclusion

@@ -14,6 +14,10 @@ Every sound has its own pitch shape, so you can tell them apart without looking:
     badge      a quick glockenspiel run up                you earned a badge
     rank       a short run up that ends on a chord        you reached a new rank
     drop       one tiny wooden tick                       a dragged tab landed
+The cat's own voice (it says something: kitty-cat sounds off silences just these):
+    meow       a soft little "mi-aow", up then down        the cat speaks up (a tab needs you, news)
+    mrrp       a short rolling trill going up             a friendly hello, a tip
+    purr       a low, very quiet purr                     petted (a click on the cat)
 """
 import math
 import os
@@ -117,12 +121,60 @@ def drop():
     return b
 
 
+def voice(buf, start, length, pitch, vowel, amp=1.0, trill=0.0, rate=26.0):
+    """A small cat voice: a buzz of harmonics shaped by two moving formants (the "i" to "ao" of a
+    meow). pitch(f) and vowel(f) give the pitch (Hz) and the formants (F1, F2) at fraction f of the
+    sound; trill rolls it (amplitude wobble at `rate` Hz, for mrrp and purr)."""
+    n0, n = int(start * SR), int(length * SR)
+    if len(buf) < n0 + n:
+        buf.extend([0.0] * (n0 + n - len(buf)))
+    phase = 0.0
+    for i in range(n):
+        f = i / n
+        t = i / SR
+        hz = pitch(f)
+        phase += 2 * math.pi * hz / SR
+        f1, f2 = vowel(f)
+        s = 0.0
+        for k in range(1, 12):
+            h = k * hz
+            if h > 9000:
+                break
+            w = math.exp(-((h - f1) / 320) ** 2) + 0.55 * math.exp(-((h - f2) / 480) ** 2) + 0.08 / k
+            s += w * math.sin(k * phase)
+        env = min(1.0, t / 0.035) * min(1.0, (length - t) / 0.09)
+        if trill:
+            env *= 1 - trill * 0.5 * (1 + math.cos(2 * math.pi * rate * t))
+        buf[n0 + i] += amp * env * s
+
+
+def meow():
+    b = []
+    voice(b, 0.0, 0.46, lambda f: 640 + 330 * math.sin(math.pi * min(1.0, f * 1.25)) - 120 * f,
+          lambda f: (700 + 500 * min(1.0, f * 2), 2300 - 1100 * f))
+    return b
+
+
+def mrrp():
+    b = []
+    voice(b, 0.0, 0.30, lambda f: 430 + 260 * f * f, lambda f: (600 + 200 * f, 1500), trill=0.85, rate=28.0)
+    return b
+
+
+def purr():
+    b = []
+    voice(b, 0.0, 0.75, lambda f: 120 + 8 * math.sin(f * 9), lambda f: (360, 900), trill=0.9, rate=24.0)
+    return b
+
+
 SOUNDS = {"done": done, "done-2": done_2, "done-3": done_3, "needs-you": needs_you, "error": error, "badge": badge, "rank": rank,
-          "drop": drop}
+          "drop": drop, "meow": meow, "mrrp": mrrp, "purr": purr}
 # Peak level of each file in dBFS, set by measuring loudness (ffmpeg ebur128). Targets: subtle,
 # about 7 dB under the desktop's "complete" chime (-17.7 LUFS): done/error/badge ~-25, rank ~-24,
-# needs-you ~-22 (the one you must not miss stays a little louder), drop ~-36 (barely there).
-PEAK_DB = {"done": -12.0, "done-2": -12.3, "done-3": -12.6, "needs-you": -10.5, "error": -12.2, "badge": -12.3, "rank": -10.0, "drop": -16.0}
+# needs-you ~-22 (the one you must not miss stays a little louder), drop ~-36 (barely there); the
+# cat's voice under the chimes: meow ~-27, mrrp ~-28, purr ~-32.
+PEAK_DB = {"done": -12.0, "done-2": -12.3, "done-3": -12.6, "needs-you": -10.5, "error": -12.2, "badge": -12.3, "rank": -10.0, "drop": -16.0,
+           "meow": -18.4, "mrrp": -12.4, "purr": -16.0}
 
 
 def write_wav(path, samples, peak_db):

@@ -524,8 +524,8 @@ class HelperCat(TabBarCase):
         self.assertEqual(tb._cat_cols_for(1), (at - 1, 30))
         tm = types.SimpleNamespace(tab_bar=self.bar(), active_tab=None, os_window_id=1)
         y = 10 * 20 + 5
-        self.assertEqual(tb._region(tm, (at + 2) * 10 + 5, y), ("button", "cat"))
-        self.assertEqual(tb._region(tm, (at - 1) * 10 + 5, y), ("button", "cat"))      # a cell before it
+        self.assertEqual(tb._region(tm, (at + 2) * 10 + 5, y), ("cat",))
+        self.assertEqual(tb._region(tm, (at - 1) * 10 + 5, y), ("cat",))               # a cell before it
         self.assertIsNone(tb._region(tm, 45, y))                                       # "+ New tab": kitty's
         self.assertIsNone(tb._region(tm, (at + 2) * 10 + 5, y + 20))                   # the quest line
         # another kitty window with a narrow sidebar has the cat elsewhere (or nowhere)
@@ -1054,10 +1054,10 @@ class CatMoves(TabBarCase):
 
     def test_reacts_to_what_happens(self):
         tb, now = self.tb, self.clock[0]
-        tb._cat["blocked"] = 1
+        tb._cat.update(blocked=1, waits=1)
         tb._cat_react()                                               # the first look: nothing new
         self.assertEqual(tb._cat["moves"], {})
-        tb._cat["blocked"] = 2                                        # another tab needs you
+        tb._cat.update(blocked=1, waits=2)                            # one stopped waiting as another began
         tb._cat_react()
         self.assertEqual(tb._cat["moves"], {"surprise": tb._frame})
         tb._cat.update(blocked=0, moves={}, done_at=now)              # one finished: hop, then wave

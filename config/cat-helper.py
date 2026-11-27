@@ -89,6 +89,18 @@ JOKES = (
     "Every tab comes back after a restart. I like those odds.",
     "If it fits, I sit. A split pane fits.",
     "I only run one git command: git purr.",
+    "I don't chase the cursor. I let it come to me.",
+    "My tail is a progress bar. It's at 100% fluff.",
+    "Some say curiosity killed the cat. I say it read the man page.",
+    "I tried Vim once. Still looking for the way out of my basket.",
+    "A watched build never finishes. So I nap next to it.",
+    "I'm fluent in three languages: bash, Python and purr.",
+    "Ctrl+C is rude. Ask the program nicely first. Then Ctrl+C.",
+    "Tabs or spaces? I prefer a sunny windowsill.",
+    "Every bug is a moth if you squint. I'm on it.",
+    "My favourite exit code is 0. Second favourite: a treat.",
+    "I keep my whiskers in a git stash for special occasions.",
+    "rm -rf the dog? Kidding. Mostly.",
 )
 WORDS = (  # (word, a plain meaning)
     ("overlay", "a window laid over another, like me right now. Close it and what's under it is back."),
@@ -107,6 +119,17 @@ WORDS = (  # (word, a plain meaning)
     ("session id", "the name of an agent's conversation, so --resume can pick it up again."),
     ("dotfile", "a settings file whose name starts with a dot, so it's hidden by default."),
     ("glob", "a pattern like *.py that matches file names."),
+    ("pipe", "the | that hands one command's output to the next one as its input."),
+    ("environment variable", "a named setting a program inherits from the shell, like HOME or PATH."),
+    ("working directory", "the folder a command runs in; cd changes it."),
+    ("stdin", "where a program reads its input from: your keys, a file, or a pipe."),
+    ("alias", "your own short name for a longer command, set in your shell's config."),
+    ("background job", "a command running while the shell lets you type more; & starts one."),
+    ("signal", "a tiny message to a running program, like stop, pause or reload."),
+    ("history", "the commands you ran before; Ctrl+R searches them."),
+    ("symlink", "a file that points to another file or folder, like a shortcut."),
+    ("tab completion", "press Tab and the shell finishes the name you started typing."),
+    ("permission", "who may read, change or run a file; ls -l shows them as rwx."),
 )
 
 
@@ -219,44 +242,68 @@ def greeting(now: datetime.datetime) -> str:
     return f"{part}! It's {now.strftime('%A')}, {now.strftime('%B')} {now.day}."
 
 
+# several ways to say each kind of news (the sidebar's cat, which speaks up by itself, takes one by
+# the day and the tab, so it doesn't say the same words every time; the helper keeps the first)
+SAY = {
+    "waiting": ("{who} “{name}” is waiting for you.", "{who} “{name}” has a question for you.",
+                "Psst: {who_l} “{name}” is waiting on you.", "{who} “{name}” needs you for a moment."),
+    "error": ("{who} “{name}” stopped with an error.", "Uh-oh: {who_l} “{name}” hit an error.",
+              "{who} “{name}” ran into trouble."),
+    "done": ("Tab {n} “{name}” finished.", "Tab {n} “{name}” is done.", "All done over in tab {n} “{name}”.",
+             "Tab {n} “{name}” wrapped up."),
+    "hello": ("Nothing needs you right now.", "All quiet on your tabs.", "Your tabs are behaving.",
+              "Nothing to report. I'm keeping watch."),
+}
+
+
+def _say(kind: str, vary: bool, seed: str, **kw) -> str:
+    forms = SAY[kind]
+    i = int(hashlib.sha1(seed.encode()).hexdigest()[:6], 16) % len(forms) if vary else 0
+    return forms[i].format(**kw)
+
+
 def suggestions(tabs, now: datetime.datetime, state: str, conf: str, hidden=frozenset(), tip_pool=None,
-                first=None) -> list:
+                first=None, vary: bool = False, recent=None) -> list:
     """Everything the cat has to say, most important first: tabs waiting for you, tabs that failed,
     tabs that finished (or, with none of those, a hello that says nothing needs you), a badge earned
     today, today's quest; then the day's own lines (a tip, a joke, a word), each the same all day. Each is a dict: kind, key,
     title, text, action (("focus", tab id), ("help",) or None) and its button's words. `first`: the
-    id of the tab that started waiting last, offered before the others that wait."""
+    id of the tab that started waiting last, offered before the others that wait; `recent`: {kind:
+    tab id} the same for "error" and "done" (the tab that failed or finished last)."""
     out = []
+    lead = dict(recent or {})
+    lead.setdefault("waiting", first)
     others = [t for t in tabs if not t.get("active")]
     here = next((t for t in tabs if t.get("active")), None)
     for state_name, kind, title in (("blocked", "waiting", "Needs you"), ("error", "error", "Error")):
         ts = [t for t in tabs if t.get("state") == state_name]
         # another tab first (this one is under the cat); of those, the one that just started waiting
-        ts.sort(key=lambda t: (t is here, kind != "waiting" or t["id"] != first))
+        ts.sort(key=lambda t: (t is here, t["id"] != lead.get(kind)))
         if not ts:
             continue
         t = ts[0]
         who = "This tab" if t is here else f"Tab {t['n']}"
+        seed = f"{kind}:{t['id']}:{now.date()}"
         if kind == "waiting":
-            text = (f"{who} “{t['name']}” is waiting for you." if len(ts) == 1 else
+            text = (_say("waiting", vary, seed, who=who, who_l=who.lower(), name=t["name"]) if len(ts) == 1 else
                     f"{_count(len(ts), 'tab')} are waiting for you. First: {who.lower()} “{t['name']}”.")
         else:
-            text = (f"{who} “{t['name']}” stopped with an error." if len(ts) == 1 else
+            text = (_say("error", vary, seed, who=who, who_l=who.lower(), name=t["name"]) if len(ts) == 1 else
                     f"{_count(len(ts), 'tab')} stopped with an error. First: {who.lower()} “{t['name']}”.")
         text += " Go there?" if t is not here else " Have a look?"
         out.append({"kind": kind, "key": f"{kind}:{t['id']}", "title": title, "text": text,
                     "action": ("focus", t["id"]), "button": "Go there", "ids": [x["id"] for x in ts]})
-    done = [t for t in others if t.get("state") == "done"]
+    done = sorted((t for t in others if t.get("state") == "done"), key=lambda t: t["id"] != lead.get("done"))
     if done:
         t = done[0]
-        text = (f"Tab {t['n']} “{t['name']}” finished. Go there?" if len(done) == 1 else
+        text = (_say("done", vary, f"done:{t['id']}:{now.date()}", n=t["n"], name=t["name"]) + " Go there?" if len(done) == 1 else
                 f"{_count(len(done), 'tab')} finished: {_names(done)}. Go to tab {t['n']}?")
         out.append({"kind": "done", "key": f"done:{t['id']}", "title": "Finished", "text": text,
                     "action": ("focus", t["id"]), "button": "Go there", "ids": [x["id"] for x in done]})
     day = now.date().toordinal()
     if not any(s["kind"] in ("waiting", "error", "done") for s in out):
         working = sum(1 for t in tabs if t.get("state") == "working")
-        text = greeting(now) + " Nothing needs you right now."
+        text = greeting(now) + " " + _say("hello", vary, f"hello:{now.date()}:{now.hour}")
         if working:
             text += f" {_count(working, 'tab')} {'is' if working == 1 else 'are'} working."
         out.append({"kind": "hello", "key": "hello", "title": "Hello", "text": text, "action": None})
@@ -397,11 +444,20 @@ def toggle_off_others(data) -> tuple:
 
 
 # ---- the picture: kitty's graphics protocol -------------------------------------------------------------
+# (append only: a frame's image id is its place here) the sidebar's cat (tab_bar.py) shows them too
 FRAMES = ("idle", "blink", "wink", "ear", "tail-left", "tail-right", "look-left", "look-right", "nod",
-          "hop-low", "hop", "wave", "surprised", "happy", "sleepy")
+          "hop-low", "hop", "wave", "surprised", "happy", "sleepy", "point-left") \
+    + tuple(f"walk-{way}-{i}" for way in ("right", "left") for i in range(1, 5))
+# The sitting poses are drawn without a mouth: one of these goes over the body (mouth-<name>.png, a
+# picture as big as the frame, empty but for the mouth), so the cat can talk in any of them.
+MOUTHS = ("w", "smile", "small", "open", "o")
+MOUTH = {"idle": "w", "blink": "w", "wink": "smile", "ear": "w", "tail-left": "w", "tail-right": "w",
+         "look-left": "w", "look-right": "w", "wave": "smile", "surprised": "o", "happy": "smile",
+         "point-left": "small"}
 SIZES = (96, 192, 384)       # the shipped frames (px): the smallest at least as big as the box is
                              # shown, so kitty only ever scales a frame down
-PLACEMENT = 7                # our one placement: a new frame replaces the old one in place
+PLACEMENT = 7                # the body's placement: a new frame replaces the old one in place
+MOUTH_PLACEMENT = 8          # the mouth's, over it
 CHUNK = 4096                 # base64 bytes per escape code (the protocol's limit)
 # moves: (frame, ticks) in a row, then back to the resting frame
 MOVES = {
@@ -420,6 +476,8 @@ FIDGETS = ("wink", "ear", "tail", "look-left", "look-right")
 
 
 def image_id(frame: str, size: int) -> int:
+    if frame.startswith("mouth-"):
+        return 51 + SIZES.index(size) * 100 + MOUTHS.index(frame[6:])
     return 1 + SIZES.index(size) * 100 + FRAMES.index(frame)
 
 
@@ -444,13 +502,16 @@ def transmit(frame: str, size: int, cat_dir: str = CAT_DIR) -> str:
 
 
 def place(frame: str, size: int, rows: int) -> str:
-    """At the cursor, `rows` tall (kitty works out the width), the cursor left where it is."""
-    return graphics(f"a=p,i={image_id(frame, size)},p={PLACEMENT},r={rows},C=1")
+    """At the cursor, `rows` tall (kitty works out the width), the cursor left where it is. A mouth
+    goes in its own placement, over the body."""
+    p, z = (MOUTH_PLACEMENT, 2) if frame.startswith("mouth-") else (PLACEMENT, 1)
+    return graphics(f"a=p,i={image_id(frame, size)},p={p},r={rows},z={z},C=1")
 
 
 def unplace(frame: str, size: int) -> str:
     """Take a frame off the screen, keeping its data (lower-case d) for the next time it shows."""
-    return graphics(f"a=d,d=i,i={image_id(frame, size)},p={PLACEMENT}")
+    p = MOUTH_PLACEMENT if frame.startswith("mouth-") else PLACEMENT
+    return graphics(f"a=d,d=i,i={image_id(frame, size)},p={p}")
 
 
 # ---- layout --------------------------------------------------------------------------------------------
@@ -497,48 +558,93 @@ def layout(cols: int, lines: int, cell_w: int, cell_h: int) -> dict:
 
 RETURN = "↵"                 # on the button Enter presses (DejaVu Sans Mono's ⏎ is small and faint)
 SHORT = {"Go there": "Go", "All shortcuts": "Shortcuts"}
+# what Next › brings: named after the next line's kind ("Next tip ›"), so the two buttons can't be confused
+NEXT_WORDS = {"waiting": "tab", "error": "tab", "done": "tab", "hello": "hello", "badge": "badge",
+              "quest": "quest", "tip": "tip", "joke": "joke", "word": "word"}
+# The buttons are filled chips, like the sidebar's search row: the action in the accent colour (the
+# active tab's pair), Next in the selection colour (lighter, quieter); × closes, in the top right
+# corner. The real colours come from kitty (theme_chips: kitty @ get-colors, or tab_bar.py's own),
+# each pair at least 4.5:1; without them, reverse video and the palette's grey.
+CHIPS = {"do": "\x1b[7m", "next": "\x1b[100m\x1b[97m"}
+_chips = {"live": None}       # the overlay's: theme_chips() from kitty @ get-colors when it opens
 
 
-def button_row(item, n: int, inner: int) -> tuple:
-    """The buttons, [(words, command, primary)], and the gap between them: the longest words that
-    fit `inner` cells, so a narrow bubble keeps every button ("Close ×" becomes "×" first, then the
-    offered action and "Next ›" get shorter), the way the sidebar's search row shortens its words."""
+def theme_chips(colors: dict) -> dict:
+    """The chips' SGR from kitty's colours ({name: "#rrggbb"}): the action like the active tab, Next
+    like a selection; a text colour that doesn't reach 4.5:1 on its fill is swapped for the better of
+    the theme's foreground and background."""
+    def rgb(v):
+        v = (v or "").lstrip("#")
+        return tuple(int(v[i:i + 2], 16) for i in (0, 2, 4)) if len(v) == 6 else None
+
+    def lum(c):
+        def ch(x):
+            x /= 255
+            return x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4
+        return 0.2126 * ch(c[0]) + 0.7152 * ch(c[1]) + 0.0722 * ch(c[2])
+
+    def contrast(a, b):
+        la, lb = lum(a), lum(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+    out = dict(CHIPS)
+    fg, bg = rgb(colors.get("foreground")), rgb(colors.get("background"))
+    for name, (fill, text) in {"do": ("active_tab_background", "active_tab_foreground"),
+                               "next": ("selection_background", "selection_foreground")}.items():
+        f, t = rgb(colors.get(fill)), rgb(colors.get(text))
+        if f is None or fg is None or bg is None:
+            continue
+        if t is None or contrast(t, f) < 4.5:
+            t = max((fg, bg), key=lambda c: contrast(c, f))
+        out[name] = "\x1b[48;2;%d;%d;%dm\x1b[38;2;%d;%d;%dm" % (f + t)
+    return out
+
+
+def button_row(item, n: int, inner: int, next_kind=None) -> tuple:
+    """The buttons, [(words, command)], and the gap between them: the longest words that fit `inner`
+    cells, so a narrow bubble keeps every button (the words get shorter, the way the sidebar's search
+    row shortens its own). The action (Go there ↵) when the line offers one; Next › (named after
+    what it brings: Next tip ›) when there are more lines. Close is the × in the top border."""
     act = item.get("button", "Go") if item.get("action") else None
     short = SHORT.get(act, act)
-    tiers = []
-    for words, nxt, close, gap in ((act, "Next ›", "Close ×", 2), (act, "Next ›", "×", 2), (short, "Next ›", "×", 2),
-                                   (short, "›", "×", 2), ("", "›", "×", 2), (None, "›", "×", 1)):
-        do = f" {words} {RETURN} " if words else f" {RETURN} " if words == "" else RETURN
-        row = ([(do, "do", True)] if act else []) + ([(nxt, "next", False)] if n > 1 else []) \
-            + [(close, "quit", False)]
-        tiers.append((row, gap))
-    for row, gap in tiers:
-        if sum(cells(w) for w, _, _ in row) + gap * (len(row) - 1) <= inner:
+    named = f"Next {NEXT_WORDS[next_kind]} ›" if next_kind in NEXT_WORDS else "Next ›"
+    tiers = ((f" {act} {RETURN} ", f" {named} ", 2), (f" {act} {RETURN} ", " Next › ", 2),
+             (f" {short} {RETURN} ", " Next › ", 2), (f" {short} {RETURN} ", " › ", 2),
+             (f" {RETURN} ", " › ", 1), (RETURN, "›", 1))
+    rows = [(([(do, "do")] if act else []) + ([(nxt, "next")] if n > 1 else []), gap) for do, nxt, gap in tiers]
+    for row, gap in rows:
+        if sum(cells(w) for w, _ in row) + gap * (len(row) - 1) <= inner:
             return row, gap
-    return tiers[-1]
+    return rows[-1]
 
 
 def top_border(item, i: int, n: int, width: int) -> tuple:
     """The top border's title and count (`2/6`, none when too narrow), and the cols (from the
-    bubble's left edge) where it is `─`, so a tail can join it there."""
-    count = f" {i + 1}/{n} " if n > 1 and width - 6 - len(f" {i + 1}/{n} ") >= 1 else ""
-    title = cut(item["title"], max(1, width - 6 - cells(count)))
-    run = max(0, width - 6 - cells(title) - cells(count))
+    bubble's left edge) where it is `─`, so a tail can join it there. Its right end is the close
+    button: ` × ` before the corner."""
+    count = f" {i + 1}/{n}" if n > 1 else ""
+    if cells(item["title"]) + cells(count) > width - 8:
+        count = ""                                    # (the title first; the count goes when they don't both fit)
+    title = cut(item["title"], max(1, width - 8 - cells(count)))
+    run = max(0, width - 8 - cells(title) - cells(count))
     first = 4 + cells(title)
-    return title, count, [1, *range(first, first + run), width - 2]
+    return title, count, [1, *range(first, first + run)]
 
 
-def bubble(item, i: int, n: int, width: int, notice: str = "", room=None, tail=None) -> tuple:
+def bubble(item, i: int, n: int, width: int, notice: str = "", room=None, tail=None, chips=None,
+           next_kind=None) -> tuple:
     """The bubble's lines (with colour), its buttons [(line index, first col, last col, command)]
-    (cols counted from the bubble's left edge, 0-based) and where its tail joins the top border
-    (that col, or None). `room`: the lines it may take; the buttons keep theirs, the text gets
-    shorter. `tail`: ("left", line index) joins a tail to the left border there (`┤`, the rest is
-    drawn left of the bubble), ("top", col) to the top border at the `─` nearest that col (`┴`)."""
+    (cols counted from the bubble's left edge, 0-based; the × in the top border is "quit") and where
+    its tail joins the top border (that col, or None). `room`: the lines it may take; the buttons
+    keep theirs, the text gets shorter. `tail`: ("left", line index) joins a tail to the left border
+    there (`┤`, the rest is drawn left of the bubble), ("top", col) to the top border at the `─`
+    nearest that col (`┴`). `chips`: the buttons' colours (theme_chips); `next_kind`: the kind of
+    the line Next › brings."""
+    chips = chips or CHIPS
     inner = width - 4
     kind = item["kind"]
     col = f"\x1b[3{KIND_COLOUR.get(kind, 4)}m"
     title, count, spots = top_border(item, i, n, width)
-    first, run = 4 + cells(title), len(spots) - 2                   # the top border's ─ after the title
+    first, run = 4 + cells(title), len(spots) - 1                  # the top border's ─ after the title
     top_col = None
     if tail and tail[0] == "top":
         top_col = min(spots, key=lambda c: (abs(c - tail[1]), c))
@@ -546,28 +652,27 @@ def bubble(item, i: int, n: int, width: int, notice: str = "", room=None, tail=N
     def dash(c):
         return "┴" if c == top_col else "─"
     top = (f"{MUTED}╭{dash(1)} {B}{col}{title}{R}{MUTED} " + "".join(dash(c) for c in range(first, first + run))
-           + f"{count}{dash(width - 2)}╮{R}")
+           + f"{count} {R}{B}×{R}{MUTED} ╮{R}")
+    regions = [(0, width - 4, width - 1, "quit")]
     text = wrap(item["text"], inner, TEXT_LINES)
     extra = wrap(notice, inner, 2) if notice else []
-    body = text + ([""] + [f"{MUTED}{x}{R}" for x in extra] if extra else [])
-    blank = True                                     # the empty line above the buttons
-    if room is not None and len(body) + 4 > room:
-        blank = False
-        if len(body) + 3 > room:                     # too tall: the text gets shorter, the buttons stay
-            keep = max(1, room - 3)
-            extra = extra[:max(0, keep - 1)]
-            body = (wrap(item["text"], inner, max(1, keep - len(extra))) + [f"{MUTED}{x}{R}" for x in extra])[:keep]
-    row, gap = button_row(item, n, inner)
-    line, plain, at, regions = "", "", 2, []
-    buttons_at = 1 + len(body) + blank
-    for words, cmd, primary in row:
+    body = text + [f"{MUTED}{x}{R}" for x in extra]
+    row, gap = button_row(item, n, inner, next_kind)
+    lines_for_buttons = 1 if row else 0
+    if room is not None and len(body) + 2 + lines_for_buttons > room:   # too tall: the text gets shorter
+        keep = max(1, room - 2 - lines_for_buttons)
+        extra = extra[:max(0, keep - 1)]
+        body = (wrap(item["text"], inner, max(1, keep - len(extra))) + [f"{MUTED}{x}{R}" for x in extra])[:keep]
+    line, plain, at = "", "", 2
+    buttons_at = 1 + len(body)
+    for words, cmd in row:
         g = gap if plain else 0
         if cells(plain) + g + cells(words) > inner:
             continue
-        line += " " * g + (f"\x1b[7m{words}\x1b[27m" if primary else words)
+        line += " " * g + f"{chips[cmd]}{words}{R}"
         regions.append((buttons_at, at + cells(plain) + g, at + cells(plain) + g + cells(words) - 1, cmd))
         plain += " " * g + words
-    middle = body + ([""] if blank else []) + [line]
+    middle = body + ([line] if row else [])
     out = [top]
     for x in middle:
         edge = "┤" if tail == ("left", len(out)) else "│"
@@ -592,8 +697,10 @@ def screen(items, sel: int, cols: int, lines: int, lay: dict, notice: str = "") 
     width = lay["width"]
     bcol = lay["bubble_col"]
 
+    nxt = items[(sel + 1) % len(items)]["kind"] if len(items) > 1 else None
+
     def make(room, tail=None):
-        return bubble(item, sel, len(items), width, notice, room, tail)
+        return bubble(item, sel, len(items), width, notice, room, tail, chips=_chips["live"], next_kind=nxt)
     canvas = {}
     cat = None
     if lay["mode"] == "side":
@@ -842,28 +949,40 @@ class Helper:
 
     # drawing
     def draw_cat(self, force: bool = False) -> None:
-        """Show the current frame: the new one placed, then the old one taken off, in one write so
-        kitty never draws the gap. Nothing is written when the frame is the one on screen."""
+        """Show the current frame, and the mouth its pose wears: the new ones placed, then the old
+        ones taken off, in one write so kitty never draws the gap. Nothing is written when the
+        frame is the one on screen."""
         if self.cat is None:
             if self.shown:
-                self.out.write(unplace(*self.shown))
+                self.out.write("".join(unplace(f, self.shown[1]) for f in self.shown[2:] if f) + unplace(*self.shown[:2]))
                 self.shown = None
             return
         col, row, rows, _cols = self.cat
         size = self.lay["size"]
-        want = (self.frame(), size)
+        frame = self.frame()
+        lips = f"mouth-{MOUTH[frame]}" if frame in MOUTH else ""
+        want = (frame, size, lips)
         if want == self.shown and not force:
             return
         s = ""
-        if image_id(*want) not in self.sent:
-            try:
-                s += transmit(*want, cat_dir=self.cat_dir)
-            except OSError:
-                return                                # a frame missing: the one on screen stays
-            self.sent.add(image_id(*want))
-        s += f"\x1b7\x1b[{row};{col}H" + place(want[0], size, rows) + "\x1b8"
-        if self.shown and self.shown != want:
-            s += unplace(*self.shown)
+        for f in (frame, lips):
+            if f and image_id(f, size) not in self.sent:
+                try:
+                    s += transmit(f, size, cat_dir=self.cat_dir)
+                except OSError:
+                    if f == frame:
+                        return                        # a frame missing: the one on screen stays
+                    lips = ""                         # (a mouth missing: none)
+                    continue
+                self.sent.add(image_id(f, size))
+        want = (frame, size, lips)
+        s += f"\x1b7\x1b[{row};{col}H" + place(frame, size, rows) + (place(lips, size, rows) if lips else "") + "\x1b8"
+        if self.shown:
+            old_frame, old_size, old_lips = self.shown
+            if (old_frame, old_size) != (frame, size):
+                s += unplace(old_frame, old_size)
+            if old_lips and (old_lips, old_size) != (lips, size):
+                s += unplace(old_lips, old_size)
         self.shown = want
         self.out.write(s)
 
@@ -879,7 +998,7 @@ class Helper:
                            "text": greeting(self.now()), "hideable": False}]
         canvas, cat, self.regions = screen(self.items, self.sel, cols, lines, self.lay, self.notice)
         if cat != self.cat and self.shown:
-            self.out.write(unplace(*self.shown))
+            self.out.write("".join(unplace(f, self.shown[1]) for f in self.shown[2:] if f) + unplace(*self.shown[:2]))
             self.shown = None
         self.cat = cat
         self.out.write("".join(f"\x1b[{y};1H{canvas.get(y, '')}\x1b[K" for y in range(1, lines + 1)))
@@ -971,6 +1090,11 @@ def panel(conf: str, state: str) -> int:
     toggled, notice = toggle_off_others(data)
     if toggled:
         return 0
+    try:                                              # the buttons in the theme's colours
+        _chips["live"] = theme_chips(dict(line.split(None, 1) for line in kitty("get-colors").splitlines()
+                                          if len(line.split()) == 2))
+    except Exception:
+        pass
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     tty.setraw(fd)

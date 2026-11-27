@@ -46,26 +46,28 @@ if command -v kitty >/dev/null; then
 else skip "kitty not found"; fi
 
 echo "Sounds"
-missing=""; for s in done done-2 done-3 needs-you error badge rank drop; do [ -s "config/sounds/$s.oga" ] || missing="$missing $s"; done
-[ -z "$missing" ] && ok "all eight sound files present" || fail "missing sounds:$missing"
+missing=""; for s in done done-2 done-3 needs-you error badge rank drop meow mrrp purr; do [ -s "config/sounds/$s.oga" ] || missing="$missing $s"; done
+[ -z "$missing" ] && ok "all eleven sound files present (the cat's meow, mrrp and purr too)" || fail "missing sounds:$missing"
 if command -v ffmpeg >/dev/null; then
   # loudness targets (LUFS) from scripts/make-sounds.py, ±1.5
   loud=""
-  for pair in done:-25 done-2:-25 done-3:-25 needs-you:-22 error:-25 badge:-25 rank:-24 drop:-35; do
+  for pair in done:-25 done-2:-25 done-3:-25 needs-you:-22 error:-25 badge:-25 rank:-24 drop:-35 meow:-27 mrrp:-28 purr:-32; do
     s="${pair%%:*}"; want="${pair#*:}"
     got="$(ffmpeg -hide_banner -nostats -i "config/sounds/$s.oga" -af "apad=pad_dur=2,ebur128" -f null - 2>&1 \
           | awk '/Summary/{f=1} f&&/I:/{print $2; exit}')"
     awk -v g="$got" -v w="$want" 'BEGIN{d=g-w; exit !(d<=1.5 && d>=-1.5)}' || loud="$loud $s=$got"
   done
-  [ -z "$loud" ] && ok "loudness on target (subtle; needs-you a little louder)" || fail "loudness off target:$loud"
+  [ -z "$loud" ] && ok "loudness on target (subtle; needs-you a little louder, the cat's voice under the chimes)" || fail "loudness off target:$loud"
 else skip "ffmpeg not found: loudness"; fi
 
 echo "The cat's frames"
-# (scripts/make-cat.py draws them; the helper shows them with kitty's graphics protocol)
-if out="$(python3 - <<'EOF'
-import os, struct
-frames = ("idle", "blink", "wink", "ear", "tail-left", "tail-right", "look-left", "look-right", "nod",
-          "hop-low", "hop", "wave", "surprised", "happy", "sleepy")
+# (scripts/make-cat.py draws them; the sidebar and the helper show them with kitty's graphics protocol;
+# the list is cat-helper.py's: every pose, the walk cycle both ways, and the mouths laid over the body)
+if out="$(PYTHONDONTWRITEBYTECODE=1 python3 - <<'EOF'
+import importlib.util, os, struct
+spec = importlib.util.spec_from_file_location("ch", "config/cat-helper.py"); ch = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ch)
+frames = list(ch.FRAMES) + [f"mouth-{m}" for m in ch.MOUTHS]
 bad, total = [], 0
 for size in (96, 192, 384):
     for f in frames:
@@ -77,9 +79,9 @@ for size in (96, 192, 384):
         total += os.path.getsize(p)
         if head[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", head[16:24]) != (size, size) or os.path.getsize(p) > (8000 if size <= 192 else 16000):
             bad.append(p)
-print(" ".join(bad) if bad else f"ok {total // 1024}")
+print(" ".join(bad) if bad else f"ok {len(frames)} {total // 1024}")
 EOF
-)" && [ "${out%% *}" = ok ]; then ok "all 45 frames there (15 poses in 3 sizes), PNGs of the right size, ${out#ok } KB in all"
+)" && [ "${out%% *}" = ok ]; then read -r _ n kb <<< "$out"; ok "all $((n * 3)) frames there ($n in 3 sizes), PNGs of the right size, $kb KB in all"
 else fail "cat frames: $out"; fi
 
 echo "Docs"
@@ -117,6 +119,11 @@ else
   export NL_TEST_DIR="$TMP/kitty"
   if bash scripts/test-kitty.sh start dark >/dev/null 2>&1; then
     NL_STARTED=1; sleep 4
+    # the drawn cat keeps still and quiet unless a test asks (tests/cat_ctl.py drives it in the test
+    # kitty): no words of its own, no wandering, no night nap (check.sh may run at night)
+    catctl() { bash scripts/test-kitty.sh k kitten "$REPO/tests/cat_ctl.py" "$@" 2>/dev/null; }
+    echo off > "$NL_TEST_DIR/home/.config/kitty/cat-talk"
+    catctl day >/dev/null; catctl freeze >/dev/null; catctl home >/dev/null
     errs="$(grep -ci 'traceback\|invalid tab title' "$NL_TEST_DIR/kitty.log")"
     [ "$errs" = 0 ] && ok "no errors in the kitty log" || fail "$errs error(s) in $NL_TEST_DIR/kitty.log"
     snd="$(bash scripts/test-kitty.sh sounds)"
@@ -167,13 +174,13 @@ print(sum(1 for o in json.load(sys.stdin) for t in o["tabs"] for w in t["windows
 spec = importlib.util.spec_from_file_location("ch", "config/cat-helper.py"); ch = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ch)
 print(sum(1 for o in json.load(sys.stdin) for t in o["tabs"] for w in t["windows"] if ch._is_helper(w.get("cmdline") or [])))'; }
-    fur() {  # fur NAME: how many pixels right of the sidebar are the cat's fur colour (#f2a14f)
+    fur() {  # fur NAME: how many pixels right of the sidebar are the cat's fur colour (#a8b0bf)
       local px cw cols; read -r _ px _ cw _ cols <<< "$(grep '^cells: ' "$NL_TEST_DIR/state/sidebar.txt")"
       px=$(( ${px:-0} + ${cw:-10} * ${cols:-31} ))
       bash scripts/test-kitty.sh shot "$1" null >/dev/null 2>&1
       ffmpeg -loglevel error -i "$NL_TEST_DIR/shots/$1.png" -vf "crop=iw-$px:ih:$px:0" -f rawvideo -pix_fmt rgb24 - 2>/dev/null \
         | python3 -c 'import sys; d = sys.stdin.buffer.read()
-print(sum(1 for i in range(0, len(d) - 2, 3) if abs(d[i] - 242) < 24 and abs(d[i + 1] - 161) < 24 and abs(d[i + 2] - 79) < 24))'; }
+print(sum(1 for i in range(0, len(d) - 2, 3) if abs(d[i] - 168) < 12 and abs(d[i + 1] - 176) < 12 and abs(d[i + 2] - 191) < 12))'; }
     cat_key() { bash scripts/test-kitty.sh k action "$(sed -n 's/^map ctrl+alt+c *//p' config/kitty.conf)" >/dev/null 2>&1; sleep 2; }
     f0="$(fur helper-0)"; cat_key; h1="$(helpers)"; f1="$(fur helper-1)"
     what="$(sed -n 's/^showing: //p' "$NL_TEST_DIR/state/cat-helper.txt" 2>/dev/null)"
@@ -182,21 +189,65 @@ print(sum(1 for i in range(0, len(d) - 2, 3) if abs(d[i] - 242) < 24 and abs(d[i
         && [[ "$what" == "1/"*" waiting waiting:"* ]]; then
       ok "Ctrl+Alt+C opens the helper cat (drawn: $f1 fur pixels; about the waiting tab), and closes it again"
     else fail "helper cat key: open $h1 → $h2, fur pixels $f0 → $f1 → $f2, showing '$what'"; fi
-    # a click on the sidebar's cat opens it; Enter goes to the waiting tab (7) and it closes; a
-    # click opens it there, and a second click closes it
-    read -r cx cy <<< "$(btn cat)"
-    python3 scripts/xclick.py "${NL_TEST_DISPLAY:-:97}" "${cx:-0}" "${cy:-0}" >/dev/null 2>&1; sleep 2
-    c1="$(helpers)"
-    bash scripts/test-kitty.sh k send-text --match state:focused $'\r' >/dev/null 2>&1; sleep 1.5
-    c2="$(helpers)"
+    # Nine, the drawn cat living in the sidebar (kitty's graphics protocol in the sidebar's own
+    # screen): its silver fur inside the sidebar, it walks, a click opens its bubble and it goes to
+    # point at the waiting tab, Go goes there, × closes it, a click elsewhere still works (and closes
+    # the bubble), it speaks up by itself word by word with a meow, and kitty-cat off removes it.
+    bash scripts/test-kitty.sh k focus-tab --match index:0 >/dev/null 2>&1
+    catval() { sed -n "s/^$1: //p" "$NL_TEST_DIR/state/cat.txt" 2>/dev/null; }
+    click() { python3 scripts/xclick.py "${NL_TEST_DISPLAY:-:97}" "${1:-0}" "${2:-0}" >/dev/null 2>&1; }
+    waitcat() {  # waitcat KEY PATTERN: up to 10 s for cat.txt's KEY to match
+      for _ in $(seq 1 40); do [[ "$(catval "$1")" =~ $2 ]] && return 0; sleep 0.25; done; return 1; }
+    sidefur() {  # sidefur NAME: how many pixels at the bottom of the sidebar (its floor) are the cat's fur colour (#a8b0bf)
+      local px cw cols; read -r _ px _ cw _ cols <<< "$(grep '^cells: ' "$NL_TEST_DIR/state/sidebar.txt")"
+      px=$(( ${px:-0} + ${cw:-10} * ${cols:-31} ))
+      bash scripts/test-kitty.sh shot "$1" null >/dev/null 2>&1
+      ffmpeg -loglevel error -i "$NL_TEST_DIR/shots/$1.png" -vf "crop=$px:120:0:ih-120" -f rawvideo -pix_fmt rgb24 - 2>/dev/null \
+        | python3 -c 'import sys; d = sys.stdin.buffer.read()
+print(sum(1 for i in range(0, len(d) - 2, 3) if abs(d[i] - 168) < 12 and abs(d[i + 1] - 176) < 12 and abs(d[i + 2] - 191) < 12))'; }
+    waitcat spot '^floor$'; sleep 1
+    m0="$(catval mode)"; n0="$(sidefur nine-0)"; read -r x0 _ <<< "$(catval cat)"
+    catctl walk 200 >/dev/null; waitcat cat '^2[0-9][0-9] '; read -r x1 _ <<< "$(catval cat)"
+    if [ "$m0" = floor ] && [ "${n0:-0}" -gt 300 ] && [ -n "$x0" ] && [ -n "$x1" ] && [ "$x0" != "$x1" ]; then
+      ok "the drawn cat sits on the sidebar's floor ($n0 fur pixels there) and walks ($x0 → $x1 px)"
+    else fail "drawn cat: mode $m0, $n0 fur pixels in the sidebar, x $x0 → $x1 ($(tr '\n' ' ' < "$NL_TEST_DIR/state/cat.txt"))"; fi
+    read -r cx cy <<< "$(catval click)"; click "$cx" "$cy"
+    waitcat spot '^visit$'; waitcat 'bubble said' '^all$'; sleep 0.3
+    b1="$(catval bubble)"; d1="$(catval 'bubble drawn')"; s1="$(catval spot)"
+    read -r gx gy <<< "$(catval 'bubble do')"; click "$gx" "$gy"; sleep 1
+    b2="$(catval bubble)"
     act="$(bash scripts/test-kitty.sh k ls 2>/dev/null | python3 -c 'import json,sys; print([i+1 for i,t in enumerate(json.load(sys.stdin)[0]["tabs"]) if t["is_active"]])')"
-    python3 scripts/xclick.py "${NL_TEST_DISPLAY:-:97}" "${cx:-0}" "${cy:-0}" >/dev/null 2>&1; sleep 2
-    c3="$(helpers)"
-    python3 scripts/xclick.py "${NL_TEST_DISPLAY:-:97}" "${cx:-0}" "${cy:-0}" >/dev/null 2>&1; sleep 1.5
-    c4="$(helpers)"
-    if [ -n "$cx" ] && [ "$c1" = 1 ] && [ "$c2" = 0 ] && [ "$act" = "[7]" ] && [ "$c3" = 1 ] && [ "$c4" = 0 ]; then
-      ok "a click on the sidebar's cat opens the helper, Enter goes to the waiting tab, a second click closes it"
-    else fail "helper cat click at ${cx:-?},${cy:-?}: open $c1, after Enter $c2 (active tab $act), click $c3, again $c4"; fi
+    if [[ "$b1" == "open waiting asked 1/"*" waiting:"* ]] && [ "$d1" = picture ] && [ "$s1" = visit ] \
+        && [ "$b2" = closed ] && [ "$act" = "[7]" ]; then
+      ok "a click on the cat opens its bubble (a picture that floats with it; it goes to point at the waiting tab); Go goes there"
+    else fail "cat bubble: '$b1' / '$d1' (spot $s1); after Go: '$b2', active tab $act"; fi
+    bash scripts/test-kitty.sh k focus-tab --match index:0 >/dev/null 2>&1; catctl home >/dev/null; sleep 1; waitcat spot '^floor$'
+    read -r cx cy <<< "$(catval click)"; click "$cx" "$cy"; waitcat bubble '^open'; sleep 1; waitcat spot 'visit'
+    waitcat 'bubble said' '^all$'
+    read -r qx qy <<< "$(catval 'bubble quit')"; click "$qx" "$qy"; sleep 1; b3="$(catval bubble)"
+    catctl home >/dev/null; sleep 1; waitcat spot '^floor$'
+    read -r cx cy <<< "$(catval click)"; click "$cx" "$cy"; waitcat bubble '^open'
+    row2="$(sed -n 's/^tabs: .*\b10:\([0-9]*\).*/\1/p' "$NL_TEST_DIR/state/sidebar.txt")"
+    read -r _ _ _ cw ch _ <<< "$(grep '^cells: ' "$NL_TEST_DIR/state/sidebar.txt")"
+    click $(( ${cw:-10} * 6 )) $(( ${row2:-0} * ${ch:-20} + ${ch:-20} / 2 )); sleep 1
+    b4="$(catval bubble)"
+    act="$(bash scripts/test-kitty.sh k ls 2>/dev/null | python3 -c 'import json,sys; print([i+1 for i,t in enumerate(json.load(sys.stdin)[0]["tabs"]) if t["is_active"]])')"
+    if [ "$b3" = closed ] && [ "$b4" = closed ] && [ "$act" = "[10]" ]; then
+      ok "× closes the bubble; a click on a tab while it's open goes to the tab (and closes it)"
+    else fail "cat bubble: after × '$b3'; click on tab 10 (row ${row2:-?}): bubble '$b4', active tab $act"; fi
+    bash scripts/test-kitty.sh k focus-tab --match index:0 >/dev/null 2>&1; catctl home >/dev/null; sleep 1; waitcat spot '^floor$'
+    : > "$NL_TEST_DIR/stub.log"
+    catctl say >/dev/null; sleep 0.4; w1="$(catctl state | sed -n 's/.* said=\([a-z-]*\).*/\1/p')"; waitcat 'bubble said' '^all$'
+    w2="$(catval 'bubble said')"; b5="$(catval bubble)"; t1="$(catctl timing)"
+    if [[ "$b5" == "open waiting said 1/1 waiting:"* ]] && [ "$w1" = talking ] && [ "$w2" = all ] \
+        && grep -q "meow.oga" "$NL_TEST_DIR/stub.log"; then
+      ok "it speaks up by itself, letter by letter with a soft meow ($t1)"
+    else fail "cat speaking: '$b5', said $w1 then $w2, sounds: $(tr '\n' ' ' < "$NL_TEST_DIR/stub.log")"; fi
+    catctl home >/dev/null; sleep 1; waitcat spot '^floor$'
+    touch "$NL_TEST_DIR/home/.config/kitty/cat-off"; sleep 1.5; waitcat mode '^off$'; m1="$(catval mode)"; n1="$(sidefur nine-off)"
+    rm -f "$NL_TEST_DIR/home/.config/kitty/cat-off"; sleep 1.5; waitcat mode '^floor$'; m2="$(catval mode)"
+    if [ "$m1" = off ] && [ "${n1:-1}" -lt 20 ] && [ "$m2" = floor ]; then ok "kitty-cat off takes the cat away ($n1 fur pixels left), on brings it back"
+    else fail "kitty-cat off: mode $m1 ($n1 fur pixels), on: $m2"; fi
     bash scripts/test-kitty.sh k focus-tab --match index:0 >/dev/null 2>&1; sleep 0.5
     # a short window (after the screenshot: focusing tabs clears their ✓ and ● marks): the waiting
     # tab (7), the active one (11) and "+ New tab" must stay in view

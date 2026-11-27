@@ -78,8 +78,9 @@ else fail "install.sh (exit $rc): $(tail -5 <<< "$out" | tr '\n' ' ')"; fi
 n="$(find config -type f ! -path '*/__pycache__/*' | wc -l | tr -d ' ')"
 m="$(find "$DEST" -type f ! -name '*.bak-*' ! -name '*.wav' | wc -l | tr -d ' ')"
 w="$(find "$DEST/sounds" -name '*.wav' | wc -l | tr -d ' ')"
-[ "$n" = "$m" ] && [ "$w" = 8 ] && ok "every config file installed ($n), and a .wav of each sound ($w)" \
-  || fail "installed $m of $n files and $w of 8 .wav sounds"
+ws="$(find config/sounds -name '*.oga' | wc -l | tr -d ' ')"   # one .wav for each sound NineLives ships
+[ "$n" = "$m" ] && [ "$ws" -gt 0 ] && [ "$w" = "$ws" ] && ok "every config file installed ($n), and a .wav of each sound ($w)" \
+  || fail "installed $m of $n files and $w of $ws .wav sounds"
 # kitty reads the installed config as a Mac kitty does: ninelives-macos.conf included, no complaints
 conf="$(kitty +runpy 'import sys; from kitty.config import load_config; o = load_config(sys.argv[-1]); print(o.listen_on)' "$DEST/kitty.conf" 2>&1)"
 [ "$conf" = "unix:ninelives-kitty-{kitty_pid}" ] && ok "kitty reads ninelives-macos.conf: listen_on $conf" \

@@ -73,7 +73,7 @@ class Reading(SettingsCase):
     def test_defaults_with_no_files(self):
         got = {k: self.s.value(k, self.conf, self.state, compact=True) for k in self.s.ROWS if k and k != "edit"}
         self.assertEqual(got, {"sounds": "on", "volume": "100%", "soundset": "NineLives", "cat": "shown",
-                               "quests": "on", "buttons": "shown", "commands": "off", "tips": "on"})
+                               "cattalk": "on", "catsounds": "on", "quests": "on", "buttons": "shown", "commands": "off", "tips": "on"})
 
     def test_switch_files_read_back(self):
         for key, (_label, name, (on, off), _d) in self.s.TOGGLES.items():
@@ -117,12 +117,27 @@ class Reading(SettingsCase):
             f.write("older\n")
         self.assertIn("restart kitty", self.s.stale_notice(self.conf, self.state))
 
+    def test_the_cat_talks_on_events_only_or_off(self):
+        conf = self.conf
+        self.assertEqual(self.s.value("cattalk", conf, self.state), "on")
+        seen = []
+        for _ in range(3):
+            self.assertTrue(self.s.change("cattalk", conf, 1))
+            seen.append(self.s.value("cattalk", conf, self.state))
+        self.assertEqual(seen, ["events only", "off", "on"])      # round and round, like the arrows
+        self.s.change("cattalk", conf, -1)
+        with open(os.path.join(conf, "cat-talk"), encoding="utf-8") as f:
+            self.assertEqual(f.read().strip(), "off")             # what tab_bar.py and kitty-cat talk read
+        self.assertEqual(self.s.value("cattalk", conf, self.state, compact=True), "off")
+        self.s.change("cattalk", conf, 1)
+        self.assertFalse(os.path.exists(os.path.join(conf, "cat-talk")))   # on: no file
+
     def test_list(self):
         self.touch("cat-off")
         self.s.set_volume(self.conf, 35)
         self.assertEqual(self.s.listing(self.conf, self.state).splitlines(),
                          ["Sounds: on", "Volume: 35%", "Sound set: NineLives", "The cat: hidden",
-                          "Quests: on · ★0/16", "Sidebar buttons: shown", "Full commands in tab names: off",
+                          "The cat talks: on", "Cat sounds: on", "Quests: on · ★0/16", "Sidebar buttons: shown", "Full commands in tab names: off",
                           "Prompt tips: on"])
 
     def test_full_commands_is_off_until_its_file_is_there(self):
@@ -323,7 +338,7 @@ class Drawing(SettingsCase):
         out = plain(s.render(self.conf, self.state, sel, 100, 24))
         self.assertIn("❯ The cat", out)
         self.assertIn("‹ shown ›", out)
-        self.assertIn("=O.O= ! means one needs you", out)
+        self.assertIn("goes to the one that needs you", out)
         self.assertIn("Esc close", out)
         self.assertEqual(out.count("❯"), 1)
 
@@ -339,7 +354,7 @@ class Drawing(SettingsCase):
         self.assertIn("100%", out)                              # the volume without its bar
         self.assertNotIn("■", out)
         self.assertNotIn("0.51…", out)                          # the header is dropped, never cut
-        self.assertIn("Enter change · Esc close", plain(self.s.render(self.conf, self.state, 0, 28, 16)))
+        self.assertIn("Enter change · Esc close", plain(self.s.render(self.conf, self.state, 0, 28, 18)))
 
     def test_a_very_narrow_pane_never_wraps(self):
         for cols in range(8, 30):

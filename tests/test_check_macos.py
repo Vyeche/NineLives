@@ -33,5 +33,37 @@ class KittyEnvironment(unittest.TestCase):
                         "the real kitty's folder (K) should have a space in its name")
 
 
+class SoundCount(unittest.TestCase):
+    """The .wav count follows the sounds NineLives ships (config/sounds/*.oga, one .wav each from
+    make-sounds.py): a new sound must not need a number changed here (the cat's three did)."""
+
+    def test_no_number_written_in(self):
+        line = next(l for l in CODE if "$w" in l and "ok " in l)
+        self.assertNotRegex(line, r'\$w"?\s*=\s*"?\d', line)
+        self.assertTrue(any("config/sounds" in l and ".oga" in l for l in CODE))
+
+    def test_every_sound_is_made(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("nl_make_sounds", os.path.join(HERE, "..", "scripts", "make-sounds.py"))
+        ms = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ms)
+        shipped = sorted(f[:-4] for f in os.listdir(os.path.join(HERE, "..", "config", "sounds")) if f.endswith(".oga"))
+        self.assertEqual(sorted(ms.SOUNDS), shipped)
+
+
+class TestKittyShots(unittest.TestCase):
+    """test-kitty.sh's screenshots are the whole hidden screen: ffmpeg 4's x11grab (the Gauntlet's
+    static build) grabs only the top-left 640x480 unless told the size, and the cat on the
+    sidebar's floor sat below that (v1.4.0's kitty lane)."""
+
+    def test_shot_says_the_size(self):
+        with open(os.path.join(HERE, "..", "scripts", "test-kitty.sh"), encoding="utf-8") as f:
+            src = f.read()
+        grabs = [l for l in src.splitlines() if "-f x11grab" in l and not l.lstrip().startswith("#")]
+        self.assertTrue(grabs)
+        for l in grabs:
+            self.assertIn("-video_size", l, l)
+
+
 if __name__ == "__main__":
     unittest.main()

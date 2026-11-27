@@ -18,7 +18,11 @@ How to test: [docs/wiki/Testing.md](docs/wiki/Testing.md).
 - **No focus stealing.** Don't focus tabs or windows on the real desktop. Update the dev kitty with
   `bash scripts/dev-kitty.sh reload` (no new window); `restart`/`start` open a window that COSMIC
   focuses, so only do that when there's no dev kitty yet.
-- **No desktop-wide screenshots.** Take pixels from the hidden test kitty (`test-kitty.sh shot`).
+- **No desktop-wide screenshots**, except through the `ninelives-desktop` MCP server
+  (`tools/desktop-mcp/server.py`, owner-approved 2026-11-27, for checking things only the real desktop
+  can show, like the cat's `kitten panel` on COSMIC). Everything else takes pixels from the hidden test
+  kitty (`test-kitty.sh shot`). That server never clicks or types; its panels can't take focus and stop
+  on their own within 60 s. Keep its screenshots out of the repo and out of anything published.
 - **No desktop attention requests.** kitty's `request_attention` makes COSMIC raise and focus kitty
   (seen 2026-11-22); NineLives must not use it.
 - `pkill -f` / `pgrep -f` can match your own shell: use patterns like `"[-]-listen-on …"`.

@@ -6,8 +6,8 @@
     settings.py list      print every setting and its value
 
 Each change is made at once, in the same files the kitty-* shell commands use (in kitty's config
-folder: sounds-off, sounds-volume, sounds-classic, cat-off, quests-off, buttons-off, full-commands,
-tips-off), so the sidebar, the shell commands and this list always agree.
+folder: sounds-off, sounds-volume, sounds-classic, cat-off, cat-talk, cat-sounds-off, quests-off,
+buttons-off, full-commands, tips-off), so the sidebar, the shell commands and this list always agree.
 """
 import hashlib
 import json
@@ -35,7 +35,11 @@ TOGGLES = {
     "soundset": ("Sound set", "sounds-classic", ("NineLives", "desktop"),
                  "NineLives' own sounds, or the desktop's standard ones. (kitty-sounds classic)"),
     "cat": ("The cat", "cat-off", ("shown", "hidden"),
-            "The cat by + New tab sums up every tab: =O.O= ! means one needs you. (kitty-cat)"),
+            "Nine, the cat in the sidebar: it sits under your tabs, goes to the one that needs you, and "
+            "a click on it tells you what's up. Hidden: no cat. (kitty-cat)"),
+    "catsounds": ("Cat sounds", "cat-sounds-off", ("on", "off"),
+                  "A soft meow or mrrp when the cat says something (with the other sounds, at their "
+                  "volume). (kitty-cat sounds)"),
     "quests": ("Quests", "quests-off", ("on", "off"),
                "Shortcut quests and badges; the next one shows under + New tab. Badges are kept. (kitty-quests)"),
     "buttons": ("Sidebar buttons", "buttons-off", ("shown", "hidden"),
@@ -48,15 +52,21 @@ TOGGLES = {
              "A tip or your next quest under each new shell prompt. (kitty-tips)"),
 }
 LABELS = {k: v[0] for k, v in TOGGLES.items()}
-LABELS.update(volume="Volume", edit="Edit kitty.conf in your editor…")
+LABELS.update(volume="Volume", cattalk="The cat talks", edit="Edit kitty.conf in your editor…")
+TALK_VALUES = ("on", "events only", "off")   # in the cat-talk file: (missing), events, off
 DESCRIPTIONS = {k: v[3] for k, v in TOGGLES.items()}
 DESCRIPTIONS.update(
     volume="How loud the tab sounds are, 5–100 %. You hear the new level. (kitty-sounds volume N)",
+    cattalk="On: the cat speaks up by itself now and then, briefly (a tab needs you or finished, a "
+            "badge, a tip), never while you type. Events only: no tips. Off: only when you click it. "
+            "(kitty-cat talk)",
     edit="Opens kitty.conf in your editor; Ctrl+Shift+F5 reloads it after you save.")
 # the rows in order; None is a blank line
-ROWS = ("sounds", "volume", "soundset", "cat", "quests", "buttons", "commands", "tips", None, "edit")
+ROWS = ("sounds", "volume", "soundset", "cat", "cattalk", "catsounds", "quests", "buttons", "commands", "tips",
+        None, "edit")
 OFF_VALUES = {"off", "hidden"}
-SHORT_LABELS = {"edit": "Edit kitty.conf…", "buttons": "Buttons", "commands": "Full commands"}   # for a narrow window
+SHORT_LABELS = {"edit": "Edit kitty.conf…", "buttons": "Buttons", "commands": "Full commands",
+                "cattalk": "Cat talks"}   # for a narrow window
 FOOTERS = ("↑↓ move · ←→ Enter change · Esc close", "↑↓ · Enter change · Esc close", "Enter change · Esc close")
 ROW_MAX = 64                 # rows are at most this wide, so a label and its value stay close
 
@@ -138,6 +148,30 @@ def set_volume(conf: str, pct: int) -> int:
     return pct
 
 
+def talk(conf: str) -> str:
+    """How much the cat says by itself: on, events only, off (the cat-talk file: events, off)."""
+    try:
+        with open(os.path.join(conf, "cat-talk"), encoding="utf-8") as f:
+            v = f.read().strip()
+    except OSError:
+        return "on"
+    return {"events": "events only", "off": "off"}.get(v, "on")
+
+
+def set_talk(conf: str, v: str) -> None:
+    path = os.path.join(conf, "cat-talk")
+    if v == "on":
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        return
+    os.makedirs(conf, exist_ok=True)
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        f.write(("events" if v.startswith("events") else "off") + "\n")
+    os.replace(path + ".tmp", path)
+
+
 def badges(state: str) -> int:
     try:
         with open(os.path.join(state, "badges"), encoding="utf-8") as f:
@@ -154,6 +188,9 @@ def value(key: str, conf: str, state: str, compact: bool = False) -> str:
             return f"{pct}%"
         full = (pct + 5) // 10
         return "■" * full + "□" * (10 - full) + f" {pct:>3}%"
+    if key == "cattalk":
+        v = talk(conf)
+        return "events" if compact and v == "events only" else v
     if key not in TOGGLES:
         return ""
     on = is_on(key, conf)
@@ -235,6 +272,13 @@ def change(key: str, conf: str, step: int = 1, wrap: bool = False) -> bool:
             return False
         set_volume(conf, new)
         preview(conf)
+        return True
+    if key == "cattalk":
+        i = TALK_VALUES.index(talk(conf))
+        n = i + (1 if step > 0 else -1)
+        if not wrap and not 0 <= n < len(TALK_VALUES):
+            n %= len(TALK_VALUES)
+        set_talk(conf, TALK_VALUES[n % len(TALK_VALUES)])
         return True
     if key not in TOGGLES:
         return False

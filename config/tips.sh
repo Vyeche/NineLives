@@ -35,7 +35,9 @@ _kitty_tips=(
   "kitty-quests lists the quests: use a shortcut once to earn its badge"
   "Ctrl+Shift+F2 (or ⚙ at the top of the sidebar) opens the NineLives settings: ↑/↓ choose, Enter changes"
   "ninelives shows every NineLives setting at a glance; ninelives settings opens the list to change them"
-  "The cat next to + New tab sums up every tab: =O.O= ! means one needs you (kitty-cat explains)"
+  "Click the cat in the sidebar: it says what needs you, today's quest and a tip (kitty-cat explains)"
+  "Drag the cat in the sidebar to put it somewhere else; it walks home after a while"
+  "kitty-cat talk events: the cat speaks up only about your tabs, no tips (off: only when clicked)"
   "Click the cat at the end of + New tab (or press Ctrl+Alt+C) and it tells you what needs you, plus a tip of the day"
   "Sounds too loud? kitty-sounds volume 40 turns the tab sounds down (5-100)"
   "A tab you're looking at doesn't chime when it finishes: you can already see it"
@@ -109,19 +111,25 @@ kitty-sounds() {
   esac
 }
 kitty-cat() {
-  case "${1:-}" in
-    off) touch "$_nl_conf"/cat-off && echo "the cat is hiding (kitty-cat on brings it back)";;
-    on)  rm -f "$_nl_conf"/cat-off && echo "=^.^=  the cat is back";;
-    *)   printf '%s\n' "The cat at the end of \"+ New tab\" watches every tab for you:" \
-           "  =O.O= !    a tab needs you (amber; 2! = two tabs)" \
-           "  =^.^= ~    tabs are working (blue; the tail swishes)" \
-           "  =^ω^= ♪    one just finished (green; ♪♪ ♪♪♪: several in a row)" \
-           "  =>.<=      something failed (red)" \
-           "  =^▽^=✦     you earned a badge (gold; ♛ = new rank)" \
-           "  =-.-= zZ   nothing happening for 3 minutes, or at night: napping (lavender)" \
-           "  =^.^=      nothing going on (ginger): it blinks, winks, glances, flicks its tail" \
-           "Click it (or Ctrl+Alt+C, or ninelives cat) and it comes out to tell you what needs you." \
-           "kitty-cat off hides it, kitty-cat on brings it back (Ctrl+Alt+C still calls it).";;
+  case "${1:-} ${2:-}" in
+    "off "*) touch "$_nl_conf"/cat-off && echo "the cat is hiding (kitty-cat on brings it back)";;
+    "on "*)  rm -f "$_nl_conf"/cat-off && echo "=^.^=  the cat is back";;
+    "talk on")     rm -f "$_nl_conf"/cat-talk && echo "the cat speaks up now and then (briefly; never while you type)";;
+    "talk events") echo events > "$_nl_conf"/cat-talk && echo "the cat speaks up only about your tabs and badges (no tips)";;
+    "talk off")    echo off > "$_nl_conf"/cat-talk && echo "the cat only talks when you click it";;
+    "sounds off")  touch "$_nl_conf"/cat-sounds-off && echo "the cat is quiet (no meows; the tab sounds stay)";;
+    "sounds on")   rm -f "$_nl_conf"/cat-sounds-off && echo "the cat meows again (soft, with the other sounds)";;
+    "talk "*|"sounds "*) echo "usage: kitty-cat talk on|events|off   kitty-cat sounds on|off";;
+    *)   printf '%s\n' "Nine, the cat in the sidebar, sits under your tabs and watches them for you:" \
+           "  it walks up to a tab that needs you (or just finished) and points at it" \
+           "  it hops when a tab finishes, looks startled when one starts waiting, naps at night" \
+           "  click it: what needs you, today's quest, a tip, a joke (Go / Next / ×); drag it about" \
+           "  now and then it says something by itself, briefly, with a soft meow" \
+           "With no room for it (a full sidebar), it sits small at the end of \"+ New tab\", or its face:" \
+           "  =O.O= !  a tab needs you   =^ω^= ♪  finished   =>.<=  failed   =-.-= zZ  napping" \
+           "kitty-cat off | on                 hide it, or bring it back (Ctrl+Alt+C still calls it)" \
+           "kitty-cat talk on | events | off   how much it says by itself (now: $(cat "$_nl_conf"/cat-talk 2>/dev/null || echo on))" \
+           "kitty-cat sounds on | off          its meows (now: $([ -e "$_nl_conf"/cat-sounds-off ] && echo off || echo on))";;
   esac
 }
 kitty-buttons() {
@@ -199,7 +207,7 @@ ninelives() {  # every NineLives switch at a glance, and the command that change
   printf '%sNineLives%s  %skitty %s · config %s%s\n' "$B" "$R" "$D" \
     "$(kitty --version 2>/dev/null | cut -d' ' -f2)" "$shown" "$R"
   _nl_row sounds "$snd" "kitty-sounds [volume N|off|on|classic]"
-  _nl_row cat "$([ -e "$c/cat-off" ] && echo hidden || echo shown)" "kitty-cat [off|on]"
+  _nl_row cat "$([ -e "$c/cat-off" ] && echo hidden || echo "shown, talks: $(cat "$c/cat-talk" 2>/dev/null || echo on), sounds: $([ -e "$c/cat-sounds-off" ] && echo off || echo on)")" "kitty-cat [off|on|talk …|sounds …]"
   if [ -e "$c/quests-off" ]; then _nl_row quests "hidden (badges kept: $n/16)" "kitty-quests on"
   else local m=0
        [ -r "$_nl_state/uses" ] && m=$(awk -F'\t' '$2 >= 10' "$_nl_state/uses" | grep -c .)

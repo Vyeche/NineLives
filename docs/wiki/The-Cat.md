@@ -1,6 +1,48 @@
 # The cat
 
-A small cat sits at the right end of the **+ New tab** line. It sums up every tab at once, so a glance at
+## Nine, in your sidebar
+
+Nine, a drawn silver tabby (green eyes, a white bib and socks, a teal collar with a gold 9 tag), lives
+on the sidebar's floor under your tabs, all the time. It:
+
+- blinks, and now and then winks, twitches an ear, flicks its tail or glances about;
+- walks a few steps along the floor every minute or so (never constantly);
+- walks up to a tab that starts waiting for you (or just finished) and points at it with its paw;
+- hops and waves when a tab finishes, looks startled when one starts waiting;
+- naps from 23:00 to 06:00 when nothing needs you, and after 3 quiet minutes;
+- can be dragged: put it anywhere in the sidebar; it sits there a while, then walks home.
+
+It stays inside the sidebar. When the tabs fill the sidebar it sits small at the end of **+ New tab**,
+and with no room even for that (or on a kitty that can't show pictures in its sidebar) the cat face
+below is back.
+
+**Click it** and its speech bubble floats above it (and moves with it): what needs you first, then
+today's quest, a tip, a joke and a word of the day. **Go there ↵** goes to the tab it's about,
+**Next tip ›** (named after what comes next) moves on, **×** in the top right corner closes it, and a
+click anywhere else in the sidebar does too. The words come out letter by letter while its mouth
+moves. It walks forward through new lines and never repeats one it just said; at the end it says
+"That's all I've got for now".
+
+**It speaks up** by itself too, briefly: when a tab starts waiting or finishes, when you earn a badge,
+and now and then with a tip of the day. Each thing once (it remembers the last lines it said, a tip
+or joke not again the same day, news about a tab not again for 30 minutes unless something new
+happens), at most one line every 3 minutes, never while you're typing, gone a few seconds after its
+last word, and it never takes the focus. A line comes with a soft meow or mrrp (at the sounds'
+volume; muted with them, or alone with `kitty-cat sounds off`). With nothing new it stays quiet and
+just does cat things.
+
+```bash
+kitty-cat talk on | events | off   # how much it says by itself (events: only about your tabs; off: only when clicked)
+kitty-cat sounds on | off          # its meows (on by default)
+kitty-cat off | on                 # hide the cat, or bring it back (at once, no restart)
+```
+
+The settings list (**Ctrl+Shift+F2**) has the same three rows: **The cat**, **The cat talks**, **Cat
+sounds**.
+
+## The cat face
+
+When the sidebar is full (or Nine can't be drawn), a small cat face sits at the right end of the **+ New tab** line instead. It sums up every tab at once, so a glance at
 one spot tells you whether anything wants you. The most important mood wins:
 
 | Face | Colour | Means |
@@ -54,7 +96,7 @@ it: a tab that needs you, finishes, fails or works, or a badge.
 
 ## Ask the cat
 
-Click the cat (or press **Ctrl+Alt+C**, or type `ninelives cat` in a shell) and it comes out over
+Press **Ctrl+Alt+C** (or type `ninelives cat` in a shell, or click the cat face) and it comes out big over
 the current tab, drawn, with a speech bubble. It says what needs you first, then something for the day:
 
 | It says | When | Enter |
@@ -78,9 +120,9 @@ dismissed. Dismiss every tip (or joke, or word) with **d** and that card no long
 | **→**, **n**, **Space** | the next line (the bubble's top right says which, `2/6`) |
 | **←**, **p** | the one before |
 | **d** | don't suggest this one again (tips, jokes, words, the quest, a badge; not news about your tabs). Kept in `~/.local/state/ninelives/cat-helper-hidden`: delete a line there to get it back |
-| **Esc**, **q** | close (so does Ctrl+Alt+C or a click on the sidebar's cat) |
+| **Esc**, **q** | close (so does Ctrl+Alt+C, or the × in the bubble's corner) |
 
-The buttons in the bubble work with a click, and clicking the drawn cat gets the next line (it winks).
+The buttons in the bubble are filled chips (the action in the accent colour, Next in the selection colour, × in the corner) and work with a click, and clicking the drawn cat gets the next line (it winks).
 In a narrow bubble the buttons take shorter words (`Close ×` becomes `×`, then `Go ↵`, `Shortcuts ↵`,
 `›`), so none of them drops off; in a very short window the text gets shorter and the buttons stay.
 
@@ -91,7 +133,7 @@ dozes when nothing needs you. It makes no sound (the tabs' own sounds already te
 appears when you ask: it never pops up by itself.
 
 The drawing is shown with kitty's graphics protocol, from small pictures that come with NineLives
-(`cat/`, 15 poses in three sizes, 96, 192 and 384 px, built by `scripts/make-cat.py`), so nothing extra
+(`cat/`, 16 poses, a walk both ways and five mouths laid over the face, in three sizes, 96, 192 and 384 px, built by `scripts/make-cat.py`), so nothing extra
 needs installing. The helper shows the smallest that is at least as big as the cat on screen, so kitty
 only ever scales it down and it stays sharp with big text or on a 2× screen. The bubble's tail points
 at the cat: from its left side when the cat sits beside it; in a narrow window the cat sits above its

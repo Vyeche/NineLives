@@ -48,7 +48,7 @@ There, `★` marks a quest shortcut you haven't used yet and a green `✓` one y
 | **Ctrl+Shift+F2** (or **⚙** in the sidebar) | NineLives settings: ↑/↓ choose, Enter or ←/→ change, Esc closes; the last row opens kitty.conf in your editor |
 | **Ctrl+Shift+A** then **M / L / 1** | more / less see-through / solid |
 | **Ctrl+Alt+M** | mute / unmute the tab sounds |
-| **Ctrl+Alt+C** (or click the cat by **+ New tab**) | ask the cat: what needs you (Enter goes there), today's quest, a tip, joke and word of the day; →/← more, d hides one, Esc closes ([The cat](The-Cat#ask-the-cat)) |
+| **Ctrl+Alt+C** (or click the cat in the sidebar: its bubble opens there) | ask the cat: what needs you (Enter goes there), today's quest, a tip, joke and word of the day; →/← more, d hides one, Esc closes ([The cat](The-Cat#ask-the-cat)) |
 | **F1** | this list |
 
 ## Kittens (type in any tab)
